@@ -1,0 +1,5 @@
+{
+  "name": "Chromatic Sonic Explorer",
+  "description": "An interactive experiment converting image colors into musical modal harmonies using the Web Audio API.",
+  "requestFramePermissions": []
+}
