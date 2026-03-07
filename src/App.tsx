@@ -839,7 +839,7 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="text-xl font-medium text-zinc-300">No Image Loaded</h3>
-                  <p className="text-zinc-500 text-sm mt-1">Upload an image to start your sonic journey</p>
+                  <p className="text-zinc-500 text-sm mt-1">Upload an image to start playin</p>
                 </div>
               </div>
             ) : (
