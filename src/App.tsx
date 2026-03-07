@@ -72,6 +72,14 @@ const midiNoteToFrequency = (midiNote: number) => {
   return 440 * Math.pow(2, (midiNote - 69) / 12);
 };
 
+const midiNoteToName = (midiNote: number) => {
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const clamped = Math.max(0, Math.min(127, midiNote));
+  const name = names[clamped % 12];
+  const octave = Math.floor(clamped / 12) - 1;
+  return `${name}${octave}`;
+};
+
 const getFrequency = (scale: Scale, value: number, baseFrequency: number) => {
   const semitones = getSemitones(scale, value);
   return baseFrequency * Math.pow(2, semitones / 12);
@@ -123,6 +131,7 @@ export default function App() {
   const [midiVelocity, setMidiVelocity] = useState(DEFAULT_MIDI_VELOCITY);
   const [isPedalToneEnabled, setIsPedalToneEnabled] = useState(false);
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
+  const [oscillatorVolume, setOscillatorVolume] = useState(50);
 
   const {
     enable: enableMidi,
@@ -152,6 +161,7 @@ export default function App() {
   const activePedalNoteRef = useRef<number | null>(null);
   const shouldUseWebAudio = !(disableWebAudioWithMidi && midiStatus === 'ready');
   const baseFrequency = midiNoteToFrequency(baseMidiNote);
+  const webAudioTargetGain = oscillatorVolume / 100;
 
   // Initialize Audio
   const initAudio = useCallback(() => {
@@ -520,7 +530,7 @@ export default function App() {
     }
 
     if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current) {
-      masterGainRef.current.gain.setTargetAtTime(0.5, audioCtxRef.current.currentTime, 0.1);
+      masterGainRef.current.gain.setTargetAtTime(webAudioTargetGain, audioCtxRef.current.currentTime, 0.1);
     }
   };
 
@@ -557,9 +567,9 @@ export default function App() {
   useEffect(() => {
     if (!masterGainRef.current || !audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
-    const targetGain = shouldUseWebAudio && isMouseDown ? 0.5 : 0;
+    const targetGain = shouldUseWebAudio && isMouseDown ? webAudioTargetGain : 0;
     masterGainRef.current.gain.setTargetAtTime(targetGain, now, 0.05);
-  }, [isMouseDown, shouldUseWebAudio]);
+  }, [isMouseDown, shouldUseWebAudio, webAudioTargetGain]);
 
   useEffect(() => {
     if (image && canvasRef.current) {
@@ -597,6 +607,18 @@ export default function App() {
     error: 'error',
     unsupported: 'unsupported',
   };
+
+  const previewPedalDegree = selectPedalDegree(
+    getScaleDegree(currentRGB.r),
+    getScaleDegree(currentRGB.g),
+    getScaleDegree(currentRGB.b),
+    currentRGB.r + currentRGB.g + currentRGB.b,
+  );
+  const previewPedalSemitones = currentScale.intervals[previewPedalDegree - 1];
+  const previewPedalBaseNote = baseMidiNote + previewPedalSemitones;
+  const previewPedalOctaveOffset = (pedalOctaveMultiplier - 1) * 12;
+  const previewPedalMidiNote = Math.max(0, Math.min(127, previewPedalBaseNote - previewPedalOctaveOffset));
+  const previewPedalNoteName = midiNoteToName(previewPedalMidiNote);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
@@ -678,6 +700,46 @@ export default function App() {
               </div>
             </div>
           </section>
+          
+          {/* live data feed */}
+          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 mb-2">
+              <Info className="w-4 h-4" />
+              <h2 className="text-xs font-bold uppercase tracking-widest">Live Data</h2>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+                <div className="text-[10px] text-zinc-500 uppercase mb-1">Red</div>
+                <div className="text-xl font-mono text-emerald-400">{currentRGB.r}</div>
+              </div>
+              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+                <div className="text-[10px] text-zinc-500 uppercase mb-1">Green</div>
+                <div className="text-xl font-mono text-emerald-400">{currentRGB.g}</div>
+              </div>
+              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
+                <div className="text-[10px] text-zinc-500 uppercase mb-1">Blue</div>
+                <div className="text-xl font-mono text-emerald-400">{currentRGB.b}</div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-white/5">
+              <div className="text-[10px] text-zinc-500 uppercase mb-3 text-center">Current Degrees</div>
+              <div className="flex justify-center gap-4 text-3xl font-mono font-bold text-white">
+                <span>{getScaleDegree(currentRGB.r)}</span>
+                <span className="text-zinc-700">/</span>
+                <span>{getScaleDegree(currentRGB.g)}</span>
+                <span className="text-zinc-700">/</span>
+                <span>{getScaleDegree(currentRGB.b)}</span>
+              </div>
+            </div>
+            <div className="pt-4 border-t border-white/5">
+              <div className="text-[10px] text-zinc-500 uppercase mb-2 text-center">Pedal Tone</div>
+              <div className="text-center font-mono text-zinc-200">
+                {isPedalToneEnabled ? `Degree ${previewPedalDegree} - ${previewPedalNoteName}` : 'Disabled'}
+              </div>
+            </div>
+          </section>
+          
 
           <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
             <div className="flex items-center justify-between text-zinc-400 mb-2">
@@ -718,6 +780,28 @@ export default function App() {
                 </div>
               </div>
             )}
+          </section>
+
+          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 mb-2">
+              <Music className="w-4 h-4" />
+              <h2 className="text-xs font-bold uppercase tracking-widest">Audio Engine</h2>
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-[10px] text-zinc-500 uppercase">
+                <span>Osc Volume</span>
+                <span>{oscillatorVolume}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={oscillatorVolume}
+                onChange={(e) => setOscillatorVolume(parseInt(e.target.value, 10))}
+                className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
           </section>
 
           <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
@@ -777,38 +861,9 @@ export default function App() {
             </div>
             {midiError && <div className="text-[11px] text-red-400">{midiError}</div>}
           </section>
+          
+          
 
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 mb-2">
-              <Info className="w-4 h-4" />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Live Data</h2>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Red</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.r}</div>
-              </div>
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Green</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.g}</div>
-              </div>
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Blue</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.b}</div>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-white/5">
-              <div className="text-[10px] text-zinc-500 uppercase mb-3 text-center">Current Degrees</div>
-              <div className="flex justify-center gap-4 text-3xl font-mono font-bold text-white">
-                <span>{getScaleDegree(currentRGB.r)}</span>
-                <span className="text-zinc-700">/</span>
-                <span>{getScaleDegree(currentRGB.g)}</span>
-                <span className="text-zinc-700">/</span>
-                <span>{getScaleDegree(currentRGB.b)}</span>
-              </div>
-            </div>
-          </section>
         </aside>
 
         {/* Canvas Area */}
@@ -919,3 +974,10 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
