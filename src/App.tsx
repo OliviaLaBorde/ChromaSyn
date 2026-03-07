@@ -33,6 +33,7 @@ const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
 const RGB_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
+const OSC_DETUNE_CENTS = [-2.5, 0, 2.5, 1.2];
 
 const BASE_NOTE_OPTIONS = Array.from({ length: 61 }, (_, i) => {
   const midiNote = 24 + i; // C1..C6
@@ -182,6 +183,7 @@ export default function App() {
       const gain = ctx.createGain();
 
       osc.type = i === PEDAL_OSC_INDEX ? 'triangle' : 'square'; // sine | square | sawtooth | triangle
+      osc.detune.setValueAtTime(OSC_DETUNE_CENTS[i] ?? 0, ctx.currentTime);
       gain.gain.setValueAtTime(i === PEDAL_OSC_INDEX ? 0 : RGB_OSC_GAIN, ctx.currentTime);
 
       osc.connect(gain);
@@ -974,6 +976,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
