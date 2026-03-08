@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Upload, Music, Settings2, Info, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Upload, Music, Settings2, Info, ChevronDown, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
 
@@ -954,11 +954,11 @@ export default function App() {
       <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold tracking-tight">ChromaSyn</h1>
+            <h1 className="text-lg font-bold tracking-tight text-pink-400 drop-shadow-[0_0_8px_rgba(236,72,153,0.35)]">ChromaSyn</h1>
           </div>
 
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-lg cursor-pointer transition-all active:scale-95 font-medium text-sm shadow-lg shadow-emerald-500/10">
+            <label className="flex items-center gap-2 px-4 py-2 bg-pink-500 hover:bg-pink-400 text-white rounded-lg cursor-pointer transition-all active:scale-95 font-medium text-sm border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.45)]">
               <Upload className="w-4 h-4" />
               <span>Load Image</span>
               <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
@@ -982,11 +982,11 @@ export default function App() {
           <button
             type="button"
             onClick={() => setIsSidebarPinned((prev) => !prev)}
-            className="absolute right-0 top-6 h-10 w-7 rounded-l-md bg-pink-500 border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.55)] flex items-center justify-center text-white hover:bg-pink-400 hover:shadow-[0_0_18px_rgba(244,114,182,0.75)]"
+            className="absolute right-0 top-[13px] h-10 w-7 rounded-l-md bg-pink-500 border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.55)] flex items-center justify-center text-white hover:bg-pink-400 hover:shadow-[0_0_18px_rgba(244,114,182,0.75)]"
             title={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
             aria-label={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
           >
-            {isSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            {isSidebarPinned ? <Lock className="w-4 h-4" /> : isSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
 
           {/* live data feed */}
@@ -1353,8 +1353,6 @@ export default function App() {
     </div>
   );
 }
-
-
 
 
 
