@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Upload, Music, Settings2, Info } from 'lucide-react';
+import { Upload, Music, Settings2, Info, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
 
@@ -38,6 +38,7 @@ type VoiceMappingConfig = {
 type VoiceMappingById = Record<VoiceId, VoiceMappingConfig>;
 
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
+type ControlPanelId = 'scale' | 'arp' | 'audio' | 'midi';
 
 const SCALES: Scale[] = [
   { name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11] },
@@ -96,6 +97,8 @@ const PRESETS = [
   { name: 'Soft grayscale + tint', gradient: 'linear-gradient(90deg, #101018 0%, #2a2a3a 35%, #7c7cff 70%, #f2f2ff 100%)' },
   { name: 'Scale walk', gradient: 'special:scale-walk' },
 ];
+
+const PANEL_SHELL_CLASS = 'bg-white/5 rounded-xl p-4 border border-white/10';
 
 // --- Helper Functions ---
 
@@ -217,6 +220,14 @@ export default function App() {
   const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
   const [oscillatorVolume, setOscillatorVolume] = useState(50);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
+  const [openPanels, setOpenPanels] = useState<Record<ControlPanelId, boolean>>({
+    scale: true,
+    arp: false,
+    audio: false,
+    midi: false,
+  });
+  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
 
   const {
     enable: enableMidi,
@@ -900,6 +911,35 @@ export default function App() {
     });
   }, [baseMidiNote, currentHSB, currentRGB, currentScale, getRawVoiceValue, voiceMappingConfig]);
 
+  const togglePanel = useCallback((panelId: ControlPanelId) => {
+    setOpenPanels((prev) => ({
+      ...prev,
+      [panelId]: !prev[panelId],
+    }));
+  }, []);
+  const isSidebarOpen = isSidebarPinned || isSidebarHovered;
+
+  const renderPanelHeader = useCallback(
+    (panelId: ControlPanelId, title: string, icon: React.ReactNode) => {
+      const isOpen = openPanels[panelId];
+      return (
+        <button
+          type="button"
+          onClick={() => togglePanel(panelId)}
+          className="w-full flex items-center justify-between gap-3 text-zinc-300 hover:text-zinc-100 transition-colors"
+          aria-expanded={isOpen}
+        >
+          <div className="flex items-center gap-2 text-zinc-400">
+            {icon}
+            <h2 className="text-[11px] font-bold uppercase tracking-widest">{title}</h2>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+      );
+    },
+    [openPanels, togglePanel],
+  );
+
   const previewPedalDegree = resolvePedalDegree(currentRGB.r, currentRGB.g, currentRGB.b, false);
   const previewPedalSemitones = previewPedalDegree ? currentScale.intervals[previewPedalDegree - 1] : null;
   const previewPedalBaseNote = previewPedalSemitones !== null ? baseMidiNote + previewPedalSemitones : null;
@@ -909,7 +949,7 @@ export default function App() {
   const previewPedalNoteName = previewPedalMidiNote !== null ? midiNoteToName(previewPedalMidiNote) : null;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
+    <div className="min-h-screen overflow-x-hidden bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
       {/* Header */}
       <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -927,269 +967,286 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Controls */}
-        <aside className="lg:col-span-1 space-y-6">
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 mb-2">
-              <Settings2 className="w-4 h-4" />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Modal Scale</h2>
-            </div>
-            <div className="space-y-3">
-              <select
-                value={currentScale.name}
-                onChange={(e) => {
-                  const selected = SCALES.find((scale) => scale.name === e.target.value);
-                  if (selected) setCurrentScale(selected);
-                }}
-                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200"
-              >
-                {SCALES.map((scale) => (
-                  <option key={scale.name} value={scale.name}>
-                    {scale.name}
-                  </option>
-                ))}
-              </select>
-              <div className="space-y-1">
-                <div className="text-[10px] text-zinc-500 uppercase">Base Note (Freq + MIDI)</div>
-                <select
-                  value={String(baseMidiNote)}
-                  onChange={(e) => setBaseMidiNote(parseInt(e.target.value, 10))}
-                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200"
-                >
-                  {BASE_NOTE_OPTIONS.map((option) => (
-                    <option key={option.midiNote} value={option.midiNote}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
-                <span>Enable Pedal Tone</span>
-                <input
-                  type="checkbox"
-                  checked={isPedalToneEnabled}
-                  onChange={(e) => setIsPedalToneEnabled(e.target.checked)}
-                  className="h-4 w-4 accent-emerald-500"
-                />
-              </label>
-              <div className="space-y-1">
-                <div className="text-[10px] text-zinc-500 uppercase">Pedal Octave</div>
-                <select
-                  value={String(pedalOctaveMultiplier)}
-                  onChange={(e) => setPedalOctaveMultiplier(parseInt(e.target.value, 10) as 1 | 2 | 3)}
-                  disabled={!isPedalToneEnabled}
-                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 disabled:text-zinc-500"
-                >
-                  <option value="1">1x</option>
-                  <option value="2">2x</option>
-                  <option value="3">3x</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[10px] text-zinc-500 uppercase">Pedal Personality</div>
-                <select
-                  value={pedalPersonality}
-                  onChange={(e) => setPedalPersonality(e.target.value as PedalPersonality)}
-                  disabled={!isPedalToneEnabled}
-                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 disabled:text-zinc-500"
-                >
-                  {PEDAL_PERSONALITIES.map((personality) => (
-                    <option key={personality.value} value={personality.value}>
-                      {personality.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="pt-3 border-t border-white/5 space-y-2">
-                <div className="text-[10px] text-zinc-500 uppercase">HSB Voices</div>
-                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
-                  <span>Hue Note</span>
-                  <input
-                    type="checkbox"
-                    checked={voiceMappingConfig.h.enabled}
-                    onChange={(e) => setVoiceEnabled('h', e.target.checked)}
-                    className="h-4 w-4 accent-emerald-500"
-                  />
-                </label>
-                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
-                  <span>Saturation Note</span>
-                  <input
-                    type="checkbox"
-                    checked={voiceMappingConfig.s.enabled}
-                    onChange={(e) => setVoiceEnabled('s', e.target.checked)}
-                    className="h-4 w-4 accent-emerald-500"
-                  />
-                </label>
-                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
-                  <span>Brightness Note</span>
-                  <input
-                    type="checkbox"
-                    checked={voiceMappingConfig.v.enabled}
-                    onChange={(e) => setVoiceEnabled('v', e.target.checked)}
-                    className="h-4 w-4 accent-emerald-500"
-                  />
-                </label>
-              </div>
-            </div>
-          </section>
-          
+      <div
+        className={`fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-[300px] transition-transform duration-200 ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%-28px)]'
+        }`}
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
+      >
+        <aside
+          className={`relative h-full bg-[#0b0b0b]/95 backdrop-blur-md border-r border-white/10 px-2.5 py-3 space-y-3 ${
+            isSidebarOpen ? 'overflow-y-auto' : 'overflow-hidden'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setIsSidebarPinned((prev) => !prev)}
+            className="absolute right-0 top-6 h-10 w-7 rounded-l-md bg-pink-500 border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.55)] flex items-center justify-center text-white hover:bg-pink-400 hover:shadow-[0_0_18px_rgba(244,114,182,0.75)]"
+            title={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
+            aria-label={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
+          >
+            {isSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+
           {/* live data feed */}
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 mb-2">
-              <Info className="w-4 h-4" />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Live Data</h2>
+          <section className={`${PANEL_SHELL_CLASS} space-y-3`}>
+            <div className="flex items-center gap-2 text-zinc-400">
+              <Info className="w-3.5 h-3.5" />
+              <h2 className="text-[11px] font-bold uppercase tracking-widest">Live Data</h2>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {liveVoiceRows.map((voice) => (
-                <div key={voice.id} className="bg-black/40 rounded-xl p-3 border border-white/5">
-                  <div className="flex items-center justify-between text-[10px] uppercase text-zinc-500">
+                <div key={voice.id} className="bg-black/40 rounded-lg p-2 border border-white/5">
+                  <div className="flex items-center justify-between text-[9px] uppercase text-zinc-500">
                     <span>{voice.label}</span>
                     <span>{voice.source}</span>
                   </div>
-                  <div className="mt-1 flex items-center justify-between font-mono">
+                  <div className="mt-1 flex items-center justify-between font-mono text-xs">
                     <span className="text-zinc-200">{voice.enabled ? voice.noteName : 'Muted'}</span>
-                    <span className="text-emerald-400">Degree {voice.degree}</span>
+                    <span className="text-emerald-400">Deg {voice.degree}</span>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="pt-4 border-t border-white/5">
-              <div className="text-[10px] text-zinc-500 uppercase mb-2 text-center">Pedal Tone</div>
-              <div className="text-center font-mono text-zinc-200">
+            <div className="pt-2 border-t border-white/5">
+              <div className="text-[9px] text-zinc-500 uppercase mb-1 text-center">Pedal Tone</div>
+              <div className="text-center font-mono text-xs text-zinc-200">
                 {isPedalToneEnabled && previewPedalDegree && previewPedalNoteName ? `Degree ${previewPedalDegree} - ${previewPedalNoteName} (${pedalPersonality})` : 'Disabled'}
               </div>
             </div>
           </section>
-          
 
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center justify-between text-zinc-400 mb-2">
-              <div className="flex items-center gap-2">
-                <Music className="w-4 h-4" />
-                <h2 className="text-xs font-bold uppercase tracking-widest">Arpeggiator</h2>
-              </div>
-              <button
-                onClick={() => setIsArpEnabled(!isArpEnabled)}
-                className={`w-10 h-5 rounded-full transition-colors relative ${isArpEnabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
-              >
-                <motion.div animate={{ x: isArpEnabled ? 20 : 2 }} className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm" />
-              </button>
-            </div>
-
-            {isArpEnabled && (
-              <div className="space-y-3 pt-2">
-                <div className="flex justify-between text-[10px] text-zinc-500 uppercase">
-                  <span>Speed</span>
-                  <span>{arpSpeed}ms</span>
-                </div>
-                <input
-                  type="range"
-                  min="50"
-                  max="500"
-                  step="10"
-                  value={arpSpeed}
-                  onChange={(e) => setArpSpeed(parseInt(e.target.value, 10))}
-                  className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                />
-                <div className="flex gap-1 justify-center">
-                  {Array.from({ length: Math.max(1, enabledVoiceIds.length) }, (_, i) => i).map((i) => (
-                    <div
-                      key={i}
-                      className={`h-1 flex-1 rounded-full transition-colors ${isMouseDown && arpIndex === i ? 'bg-emerald-400' : 'bg-zinc-800'}`}
-                    />
+          <section className={PANEL_SHELL_CLASS}>
+            {renderPanelHeader('scale', 'Modal Scale', <Settings2 className="w-3.5 h-3.5" />)}
+            {openPanels.scale && (
+              <div className="mt-3 space-y-2.5">
+                <select
+                  value={currentScale.name}
+                  onChange={(e) => {
+                    const selected = SCALES.find((scale) => scale.name === e.target.value);
+                    if (selected) setCurrentScale(selected);
+                  }}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                >
+                  {SCALES.map((scale) => (
+                    <option key={scale.name} value={scale.name}>
+                      {scale.name}
+                    </option>
                   ))}
+                </select>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Base Note (Freq + MIDI)</div>
+                  <select
+                    value={String(baseMidiNote)}
+                    onChange={(e) => setBaseMidiNote(parseInt(e.target.value, 10))}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                  >
+                    {BASE_NOTE_OPTIONS.map((option) => (
+                      <option key={option.midiNote} value={option.midiNote}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                  <span>Enable Pedal Tone</span>
+                  <input
+                    type="checkbox"
+                    checked={isPedalToneEnabled}
+                    onChange={(e) => setIsPedalToneEnabled(e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Pedal Octave</div>
+                  <select
+                    value={String(pedalOctaveMultiplier)}
+                    onChange={(e) => setPedalOctaveMultiplier(parseInt(e.target.value, 10) as 1 | 2 | 3)}
+                    disabled={!isPedalToneEnabled}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 disabled:text-zinc-500"
+                  >
+                    <option value="1">1x</option>
+                    <option value="2">2x</option>
+                    <option value="3">3x</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Pedal Personality</div>
+                  <select
+                    value={pedalPersonality}
+                    onChange={(e) => setPedalPersonality(e.target.value as PedalPersonality)}
+                    disabled={!isPedalToneEnabled}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 disabled:text-zinc-500"
+                  >
+                    {PEDAL_PERSONALITIES.map((personality) => (
+                      <option key={personality.value} value={personality.value}>
+                        {personality.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="pt-2 border-t border-white/5 space-y-1.5">
+                  <div className="text-[9px] text-zinc-500 uppercase">HSB Voices</div>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Hue Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.h.enabled}
+                      onChange={(e) => setVoiceEnabled('h', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Saturation Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.s.enabled}
+                      onChange={(e) => setVoiceEnabled('s', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Brightness Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.v.enabled}
+                      onChange={(e) => setVoiceEnabled('v', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
                 </div>
               </div>
             )}
           </section>
 
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 mb-2">
-              <Music className="w-4 h-4" />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Audio Engine</h2>
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-[10px] text-zinc-500 uppercase">
-                <span>Osc Volume</span>
-                <span>{oscillatorVolume}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={oscillatorVolume}
-                onChange={(e) => setOscillatorVolume(parseInt(e.target.value, 10))}
-                className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-          </section>
-
-          <section className="bg-white/5 rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 mb-2">
-              <Settings2 className="w-4 h-4" />
-              <h2 className="text-xs font-bold uppercase tracking-widest">MIDI Output</h2>
-            </div>
-            <button
-              onClick={() => void enableMidi()}
-              className="w-full px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-lg transition-all active:scale-95 font-medium text-sm"
-            >
-              Enable MIDI
-            </button>
-            <div className="space-y-2">
-              <div className="text-[10px] text-zinc-500 uppercase">Destination</div>
-              <select
-                value={selectedOutputId}
-                onChange={(e) => setSelectedOutputId(e.target.value)}
-                disabled={midiOutputs.length === 0}
-                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 disabled:text-zinc-500"
-              >
-                {midiOutputs.length === 0 ? (
-                  <option value="">No MIDI outputs</option>
-                ) : (
-                  midiOutputs.map((output) => (
-                    <option key={output.id} value={output.id}>
-                      {output.name}
-                    </option>
-                  ))
+          <section className={PANEL_SHELL_CLASS}>
+            {renderPanelHeader('arp', 'Arpeggiator', <Music className="w-3.5 h-3.5" />)}
+            {openPanels.arp && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between text-xs text-zinc-300">
+                  <span>Enabled</span>
+                  <button
+                    onClick={() => setIsArpEnabled(!isArpEnabled)}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${isArpEnabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                  >
+                    <motion.div animate={{ x: isArpEnabled ? 20 : 2 }} className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm" />
+                  </button>
+                </div>
+                {isArpEnabled && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Speed</span>
+                      <span>{arpSpeed}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="500"
+                      step="10"
+                      value={arpSpeed}
+                      onChange={(e) => setArpSpeed(parseInt(e.target.value, 10))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex gap-1 justify-center">
+                      {Array.from({ length: Math.max(1, enabledVoiceIds.length) }, (_, i) => i).map((i) => (
+                        <div
+                          key={i}
+                          className={`h-1 flex-1 rounded-full transition-colors ${isMouseDown && arpIndex === i ? 'bg-emerald-400' : 'bg-zinc-800'}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 )}
-              </select>
-            </div>
-            <div className="text-[10px] text-zinc-500 uppercase">Status: {midiStatusText[midiStatus] ?? midiStatus}</div>
-            <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
-              <span>Mute web audio when MIDI ready</span>
-              <input
-                type="checkbox"
-                checked={disableWebAudioWithMidi}
-                onChange={(e) => setDisableWebAudioWithMidi(e.target.checked)}
-                className="h-4 w-4 accent-emerald-500"
-              />
-            </label>
-            <div className="space-y-2">
-              <div className="flex justify-between text-[10px] text-zinc-500 uppercase">
-                <span>MIDI Velocity</span>
-                <span>{midiVelocity}</span>
               </div>
-              <input
-                type="range"
-                min="1"
-                max="127"
-                step="1"
-                value={midiVelocity}
-                onChange={(e) => setMidiVelocity(parseInt(e.target.value, 10))}
-                className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-            {midiError && <div className="text-[11px] text-red-400">{midiError}</div>}
+            )}
           </section>
-          
-          
 
+          <section className={PANEL_SHELL_CLASS}>
+            {renderPanelHeader('audio', 'Audio Engine', <Music className="w-3.5 h-3.5" />)}
+            {openPanels.audio && (
+              <div className="mt-3 space-y-2">
+                <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                  <span>Osc Volume</span>
+                  <span>{oscillatorVolume}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={oscillatorVolume}
+                  onChange={(e) => setOscillatorVolume(parseInt(e.target.value, 10))}
+                  className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+            )}
+          </section>
+
+          <section className={PANEL_SHELL_CLASS}>
+            {renderPanelHeader('midi', 'MIDI Output', <Settings2 className="w-3.5 h-3.5" />)}
+            {openPanels.midi && (
+              <div className="mt-3 space-y-2">
+                <button
+                  onClick={() => void enableMidi()}
+                  className="w-full px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black rounded-lg transition-all active:scale-95 font-medium text-xs"
+                >
+                  Enable MIDI
+                </button>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Destination</div>
+                  <select
+                    value={selectedOutputId}
+                    onChange={(e) => setSelectedOutputId(e.target.value)}
+                    disabled={midiOutputs.length === 0}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 disabled:text-zinc-500"
+                  >
+                    {midiOutputs.length === 0 ? (
+                      <option value="">No MIDI outputs</option>
+                    ) : (
+                      midiOutputs.map((output) => (
+                        <option key={output.id} value={output.id}>
+                          {output.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="text-[9px] text-zinc-500 uppercase">Status: {midiStatusText[midiStatus] ?? midiStatus}</div>
+                <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                  <span>Mute web audio when MIDI ready</span>
+                  <input
+                    type="checkbox"
+                    checked={disableWebAudioWithMidi}
+                    onChange={(e) => setDisableWebAudioWithMidi(e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                    <span>MIDI Velocity</span>
+                    <span>{midiVelocity}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="127"
+                    step="1"
+                    value={midiVelocity}
+                    onChange={(e) => setMidiVelocity(parseInt(e.target.value, 10))}
+                    className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+                {midiError && <div className="text-[11px] text-red-400">{midiError}</div>}
+              </div>
+            )}
+          </section>
         </aside>
+      </div>
 
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Canvas Area */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="space-y-4">
           <div className="bg-white/5 rounded-2xl p-4 border border-white/10 mb-4 overflow-x-auto">
             <div className="flex items-center gap-2 text-zinc-400 mb-3">
               <Settings2 className="w-3.5 h-3.5" />
