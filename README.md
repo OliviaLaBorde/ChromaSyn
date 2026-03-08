@@ -69,3 +69,10 @@ Default dev URL:
 - Web Audio starts only after user interaction (browser policy).
 - If no MIDI output is available, internal audio still works.
 - This app does not send MIDI clock/transport.
+
+
+## What's coming next!
+- Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
+- Custom chord mapping - dictate your own chord set and map the image to only those!
+- Chord hold and sustain with a hotkey to allow you to search for new chords with the mouse - note will sustain until next click
+- 

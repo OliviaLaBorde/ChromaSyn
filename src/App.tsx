@@ -17,6 +17,8 @@ type ActiveVoiceNote = {
   note: number | null;
 };
 
+type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
+
 const SCALES: Scale[] = [
   { name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11] },
   { name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
@@ -34,6 +36,12 @@ const DEFAULT_MIDI_VELOCITY = 100;
 const RGB_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
 const OSC_DETUNE_CENTS = [-2.5, 0, 2.5, 1.2];
+const PEDAL_PERSONALITIES: Array<{ value: PedalPersonality; label: string }> = [
+  { value: 'classic', label: 'Classic' },
+  { value: 'anchor', label: 'Anchor' },
+  { value: 'inertia', label: 'Inertia' },
+  { value: 'edge-walk', label: 'Edge-Walk' },
+];
 
 const BASE_NOTE_OPTIONS = Array.from({ length: 61 }, (_, i) => {
   const midiNote = 24 + i; // C1..C6
@@ -101,15 +109,23 @@ const getDegreeFromSum = (sum: number) => {
   return degreeIndex + 1;
 };
 
-const selectPedalDegree = (rDegree: number, gDegree: number, bDegree: number, rgbSum: number) => {
-  const degrees = [rDegree, gDegree, bDegree];
-  if (degrees.includes(1)) return 1;
-
+const getRepeatedDegree = (degrees: number[]) => {
   const degreeCounts = new Map<number, number>();
   degrees.forEach((degree) => {
     degreeCounts.set(degree, (degreeCounts.get(degree) ?? 0) + 1);
   });
-  const repeated = degrees.find((degree) => (degreeCounts.get(degree) ?? 0) >= 2);
+  return degrees.find((degree) => (degreeCounts.get(degree) ?? 0) >= 2) ?? null;
+};
+
+const stepDegreeToward = (from: number, to: number) => {
+  if (from === to) return from;
+  return from < to ? from + 1 : from - 1;
+};
+
+const selectPedalDegree = (rDegree: number, gDegree: number, bDegree: number, rgbSum: number) => {
+  const degrees = [rDegree, gDegree, bDegree];
+  if (degrees.includes(1)) return 1;
+  const repeated = getRepeatedDegree(degrees);
   return repeated ?? getDegreeFromSum(rgbSum);
 };
 
@@ -132,6 +148,7 @@ export default function App() {
   const [midiVelocity, setMidiVelocity] = useState(DEFAULT_MIDI_VELOCITY);
   const [isPedalToneEnabled, setIsPedalToneEnabled] = useState(false);
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
+  const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
   const [oscillatorVolume, setOscillatorVolume] = useState(50);
 
   const {
@@ -160,6 +177,14 @@ export default function App() {
   const latestRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
   const previousMidiOutputRef = useRef<string>('');
   const activePedalNoteRef = useRef<number | null>(null);
+  const pedalDegreeRef = useRef<number | null>(null);
+  const pedalPersonalityMemoryRef = useRef({
+    anchorCandidate: null as number | null,
+    anchorCount: 0,
+    inertiaCandidate: null as number | null,
+    inertiaCount: 0,
+    edgeFlip: false,
+  });
   const shouldUseWebAudio = !(disableWebAudioWithMidi && midiStatus === 'ready');
   const baseFrequency = midiNoteToFrequency(baseMidiNote);
   const webAudioTargetGain = oscillatorVolume / 100;
@@ -295,6 +320,115 @@ export default function App() {
     }
   }, [isCanvasPopulated, pendingPreset, drawPreset]);
 
+  const resetPedalPersonalityState = useCallback(() => {
+    pedalDegreeRef.current = null;
+    pedalPersonalityMemoryRef.current = {
+      anchorCandidate: null,
+      anchorCount: 0,
+      inertiaCandidate: null,
+      inertiaCount: 0,
+      edgeFlip: false,
+    };
+  }, []);
+
+  const resolvePedalDegree = useCallback(
+    (r: number, g: number, b: number, advanceState: boolean) => {
+      if (!isPedalToneEnabled) return null;
+
+      const degrees = [getScaleDegree(r), getScaleDegree(g), getScaleDegree(b)];
+      const repeatedDegree = getRepeatedDegree(degrees);
+      const hasTonic = degrees.includes(1);
+      const classicDegree = hasTonic ? 1 : repeatedDegree ?? getDegreeFromSum(r + g + b);
+      const currentDegree = pedalDegreeRef.current;
+
+      if (pedalPersonality === 'classic') {
+        if (advanceState) {
+          pedalDegreeRef.current = classicDegree;
+        }
+        return classicDegree;
+      }
+
+      if (!advanceState) {
+        return currentDegree ?? classicDegree;
+      }
+
+      const memory = pedalPersonalityMemoryRef.current;
+      let resolvedDegree = currentDegree ?? classicDegree;
+
+      if (pedalPersonality === 'anchor') {
+        if (currentDegree === null || hasTonic || classicDegree === currentDegree) {
+          resolvedDegree = classicDegree;
+          memory.anchorCandidate = null;
+          memory.anchorCount = 0;
+        } else {
+          if (memory.anchorCandidate === classicDegree) {
+            memory.anchorCount += 1;
+          } else {
+            memory.anchorCandidate = classicDegree;
+            memory.anchorCount = 1;
+          }
+
+          if (memory.anchorCount >= 3) {
+            resolvedDegree = classicDegree;
+            memory.anchorCandidate = null;
+            memory.anchorCount = 0;
+          } else {
+            resolvedDegree = currentDegree;
+          }
+        }
+      }
+
+      if (pedalPersonality === 'inertia') {
+        if (currentDegree === null || hasTonic || classicDegree === currentDegree) {
+          resolvedDegree = classicDegree;
+          memory.inertiaCandidate = null;
+          memory.inertiaCount = 0;
+        } else {
+          const distance = Math.abs(classicDegree - currentDegree);
+          if (distance >= 2) {
+            resolvedDegree = classicDegree;
+            memory.inertiaCandidate = null;
+            memory.inertiaCount = 0;
+          } else {
+            if (memory.inertiaCandidate === classicDegree) {
+              memory.inertiaCount += 1;
+            } else {
+              memory.inertiaCandidate = classicDegree;
+              memory.inertiaCount = 1;
+            }
+            resolvedDegree = memory.inertiaCount >= 2 ? classicDegree : currentDegree;
+          }
+        }
+      }
+
+      if (pedalPersonality === 'edge-walk') {
+        if (currentDegree === null || hasTonic || repeatedDegree !== null) {
+          resolvedDegree = classicDegree;
+          memory.edgeFlip = false;
+        } else {
+          memory.edgeFlip = !memory.edgeFlip;
+          resolvedDegree = memory.edgeFlip ? stepDegreeToward(currentDegree, classicDegree) : classicDegree;
+        }
+      }
+
+      pedalDegreeRef.current = resolvedDegree;
+      return resolvedDegree;
+    },
+    [isPedalToneEnabled, pedalPersonality],
+  );
+
+  const getPedalMidiNote = useCallback(
+    (r: number, g: number, b: number, advanceState: boolean) => {
+      const pedalDegree = resolvePedalDegree(r, g, b, advanceState);
+      if (pedalDegree === null) return null;
+
+      const semitones = currentScale.intervals[pedalDegree - 1];
+      const baseNote = baseMidiNote + semitones;
+      const octaveOffset = (pedalOctaveMultiplier - 1) * 12;
+      return Math.max(0, Math.min(127, baseNote - octaveOffset));
+    },
+    [baseMidiNote, currentScale.intervals, pedalOctaveMultiplier, resolvePedalDegree],
+  );
   const updateFrequencies = useCallback(
     (r: number, g: number, b: number) => {
       if (!audioCtxRef.current || !isAudioStarted || !shouldUseWebAudio) return;
@@ -317,20 +451,16 @@ export default function App() {
       const pedalOsc = oscillatorsRef.current[PEDAL_OSC_INDEX];
       const pedalGain = gainNodesRef.current[PEDAL_OSC_INDEX];
       if (pedalOsc && pedalGain) {
-        if (!isPedalToneEnabled) {
+        const pedalMidiNote = getPedalMidiNote(r, g, b, isMouseDown);
+        if (pedalMidiNote === null) {
           pedalGain.gain.setTargetAtTime(0, now, 0.05);
         } else {
-          const pedalDegree = selectPedalDegree(getScaleDegree(r), getScaleDegree(g), getScaleDegree(b), r + g + b);
-          const semitones = currentScale.intervals[pedalDegree - 1];
-          const baseNote = baseMidiNote + semitones;
-          const octaveOffset = (pedalOctaveMultiplier - 1) * 12;
-          const pedalMidiNote = Math.max(0, Math.min(127, baseNote - octaveOffset));
           pedalOsc.frequency.setTargetAtTime(midiNoteToFrequency(pedalMidiNote), now, 0.05);
           pedalGain.gain.setTargetAtTime(PEDAL_OSC_GAIN, now, 0.05);
         }
       }
     },
-    [baseFrequency, baseMidiNote, currentScale, isAudioStarted, isArpEnabled, isPedalToneEnabled, pedalOctaveMultiplier, shouldUseWebAudio],
+    [baseFrequency, currentScale, getPedalMidiNote, isArpEnabled, isAudioStarted, isMouseDown, shouldUseWebAudio],
   );
 
   const getMidiNotes = useCallback(
@@ -342,20 +472,6 @@ export default function App() {
       ];
     },
     [baseMidiNote, currentScale],
-  );
-
-  const getPedalMidiNote = useCallback(
-    (r: number, g: number, b: number) => {
-      if (!isPedalToneEnabled) return null;
-
-      const pedalDegree = selectPedalDegree(getScaleDegree(r), getScaleDegree(g), getScaleDegree(b), r + g + b);
-
-      const semitones = currentScale.intervals[pedalDegree - 1];
-      const baseNote = baseMidiNote + semitones;
-      const octaveOffset = (pedalOctaveMultiplier - 1) * 12;
-      return Math.max(0, Math.min(127, baseNote - octaveOffset));
-    },
-    [baseMidiNote, currentScale.intervals, isPedalToneEnabled, pedalOctaveMultiplier],
   );
 
   const setVoiceMidiNote = useCallback(
@@ -470,7 +586,7 @@ export default function App() {
   useEffect(() => {
     if (!isMouseDown || !latestMidiNotesRef.current || !latestRgbRef.current) return;
     const { r, g, b } = latestRgbRef.current;
-    applyMidiNotes(latestMidiNotesRef.current, getPedalMidiNote(r, g, b));
+    applyMidiNotes(latestMidiNotesRef.current, getPedalMidiNote(r, g, b, false));
   }, [applyMidiNotes, arpIndex, baseMidiNote, currentScale, getPedalMidiNote, isArpEnabled, isMouseDown, isPedalToneEnabled, pedalOctaveMultiplier]);
 
   const sampleColor = useCallback(
@@ -493,7 +609,7 @@ export default function App() {
 
       const midiNotes = getMidiNotes(r, g, b);
       latestMidiNotesRef.current = midiNotes;
-      applyMidiNotes(midiNotes, getPedalMidiNote(r, g, b));
+      applyMidiNotes(midiNotes, getPedalMidiNote(r, g, b, true));
     },
     [applyMidiNotes, getMidiNotes, getPedalMidiNote, updateFrequencies],
   );
@@ -512,6 +628,7 @@ export default function App() {
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    resetPedalPersonalityState();
     if (!isAudioStarted && shouldUseWebAudio) {
       initAudio();
     }
@@ -539,12 +656,18 @@ export default function App() {
   const handleMouseUp = useCallback(() => {
     setIsMouseDown(false);
     clearActiveMidiNotes();
+    resetPedalPersonalityState();
 
     if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current) {
       masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.1);
     }
-  }, [clearActiveMidiNotes, shouldUseWebAudio]);
+  }, [clearActiveMidiNotes, resetPedalPersonalityState, shouldUseWebAudio]);
 
+
+  useEffect(() => {
+    if (isMouseDown) return;
+    resetPedalPersonalityState();
+  }, [isMouseDown, isPedalToneEnabled, pedalPersonality, resetPedalPersonalityState]);
   useEffect(() => {
     if (previousMidiOutputRef.current && previousMidiOutputRef.current !== selectedOutputId) {
       clearActiveMidiNotes();
@@ -610,17 +733,13 @@ export default function App() {
     unsupported: 'unsupported',
   };
 
-  const previewPedalDegree = selectPedalDegree(
-    getScaleDegree(currentRGB.r),
-    getScaleDegree(currentRGB.g),
-    getScaleDegree(currentRGB.b),
-    currentRGB.r + currentRGB.g + currentRGB.b,
-  );
-  const previewPedalSemitones = currentScale.intervals[previewPedalDegree - 1];
-  const previewPedalBaseNote = baseMidiNote + previewPedalSemitones;
+  const previewPedalDegree = resolvePedalDegree(currentRGB.r, currentRGB.g, currentRGB.b, false);
+  const previewPedalSemitones = previewPedalDegree ? currentScale.intervals[previewPedalDegree - 1] : null;
+  const previewPedalBaseNote = previewPedalSemitones !== null ? baseMidiNote + previewPedalSemitones : null;
   const previewPedalOctaveOffset = (pedalOctaveMultiplier - 1) * 12;
-  const previewPedalMidiNote = Math.max(0, Math.min(127, previewPedalBaseNote - previewPedalOctaveOffset));
-  const previewPedalNoteName = midiNoteToName(previewPedalMidiNote);
+  const previewPedalMidiNote =
+    previewPedalBaseNote !== null ? Math.max(0, Math.min(127, previewPedalBaseNote - previewPedalOctaveOffset)) : null;
+  const previewPedalNoteName = previewPedalMidiNote !== null ? midiNoteToName(previewPedalMidiNote) : null;
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
@@ -699,6 +818,20 @@ export default function App() {
                   <option value="2">2x</option>
                   <option value="3">3x</option>
                 </select>
+              </div>              <div className="space-y-1">
+                <div className="text-[10px] text-zinc-500 uppercase">Pedal Personality</div>
+                <select
+                  value={pedalPersonality}
+                  onChange={(e) => setPedalPersonality(e.target.value as PedalPersonality)}
+                  disabled={!isPedalToneEnabled}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 disabled:text-zinc-500"
+                >
+                  {PEDAL_PERSONALITIES.map((personality) => (
+                    <option key={personality.value} value={personality.value}>
+                      {personality.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </section>
@@ -737,7 +870,7 @@ export default function App() {
             <div className="pt-4 border-t border-white/5">
               <div className="text-[10px] text-zinc-500 uppercase mb-2 text-center">Pedal Tone</div>
               <div className="text-center font-mono text-zinc-200">
-                {isPedalToneEnabled ? `Degree ${previewPedalDegree} - ${previewPedalNoteName}` : 'Disabled'}
+                {isPedalToneEnabled && previewPedalDegree && previewPedalNoteName ? `Degree ${previewPedalDegree} - ${previewPedalNoteName} (${pedalPersonality})` : 'Disabled'}
               </div>
             </div>
           </section>
@@ -976,6 +1109,26 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
