@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Upload, Music, Settings2, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
@@ -10,12 +10,32 @@ type Scale = {
   intervals: number[]; // semitones from root
 };
 
-type VoiceIndex = 0 | 1 | 2;
+type VoiceId = 'r' | 'g' | 'b' | 'h' | 's' | 'v';
+type VoiceSource = 'rgb' | 'hsb';
+type HsbColor = { h: number; s: number; v: number };
+
+type VoiceDescriptor = {
+  id: VoiceId;
+  label: string;
+  source: VoiceSource;
+  defaultEnabled: boolean;
+  detuneCents: number;
+  gain: number;
+};
 
 type ActiveVoiceNote = {
-  voice: VoiceIndex;
+  voice: VoiceId;
   note: number | null;
 };
+
+type VoiceMappingConfig = {
+  enabled: boolean;
+  inputRange: [number, number];
+  octaveSpan: number;
+  degreeBias: number;
+};
+
+type VoiceMappingById = Record<VoiceId, VoiceMappingConfig>;
 
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
 
@@ -29,13 +49,23 @@ const SCALES: Scale[] = [
   { name: 'Locrian', intervals: [0, 1, 3, 5, 6, 8, 10] },
 ];
 
-const VOICES: VoiceIndex[] = [0, 1, 2];
-const PEDAL_OSC_INDEX = 3;
 const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
-const RGB_OSC_GAIN = 0.2;
+const MELODIC_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
-const OSC_DETUNE_CENTS = [-2.5, 0, 2.5, 1.2];
+const ARP_ACTIVE_GAIN = 0.4;
+const DEFAULT_OCTAVE_SPAN = 3;
+const MELODIC_VOICES: VoiceDescriptor[] = [
+  { id: 'r', label: 'Red', source: 'rgb', defaultEnabled: true, detuneCents: -2.5, gain: MELODIC_OSC_GAIN },
+  { id: 'g', label: 'Green', source: 'rgb', defaultEnabled: true, detuneCents: 0, gain: MELODIC_OSC_GAIN },
+  { id: 'b', label: 'Blue', source: 'rgb', defaultEnabled: true, detuneCents: 2.5, gain: MELODIC_OSC_GAIN },
+  { id: 'h', label: 'Hue', source: 'hsb', defaultEnabled: true, detuneCents: -1.5, gain: MELODIC_OSC_GAIN },
+  { id: 's', label: 'Saturation', source: 'hsb', defaultEnabled: true, detuneCents: 1.5, gain: MELODIC_OSC_GAIN },
+  { id: 'v', label: 'Brightness', source: 'hsb', defaultEnabled: true, detuneCents: 3.2, gain: MELODIC_OSC_GAIN },
+];
+const PEDAL_OSC_INDEX = MELODIC_VOICES.length;
+const TOTAL_OSCILLATORS = MELODIC_VOICES.length + 1;
+const PEDAL_OSC_DETUNE_CENTS = 1.2;
 const PEDAL_PERSONALITIES: Array<{ value: PedalPersonality; label: string }> = [
   { value: 'classic', label: 'Classic' },
   { value: 'anchor', label: 'Anchor' },
@@ -69,11 +99,54 @@ const PRESETS = [
 
 // --- Helper Functions ---
 
-const getSemitones = (scale: Scale, value: number) => {
-  // Map 0-255 to a scale degree over ~3 octaves
-  const degree = Math.floor((value / 255) * 21); // 3 octaves * 7 notes
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const rgbToHsb = (r: number, g: number, b: number): HsbColor => {
+  const rn = clamp(r / 255, 0, 1);
+  const gn = clamp(g / 255, 0, 1);
+  const bn = clamp(b / 255, 0, 1);
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const delta = max - min;
+
+  let hue = 0;
+  if (delta !== 0) {
+    if (max === rn) hue = ((gn - bn) / delta) % 6;
+    else if (max === gn) hue = (bn - rn) / delta + 2;
+    else hue = (rn - gn) / delta + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+
+  const saturation = max === 0 ? 0 : delta / max;
+  const brightness = max;
+  return { h: hue, s: saturation, v: brightness };
+};
+
+const getDefaultVoiceMappingConfig = (): VoiceMappingById =>
+  MELODIC_VOICES.reduce((acc, voice) => {
+    acc[voice.id] = {
+      enabled: voice.defaultEnabled,
+      inputRange: [0, 255],
+      octaveSpan: DEFAULT_OCTAVE_SPAN,
+      degreeBias: 0,
+    };
+    return acc;
+  }, {} as VoiceMappingById);
+
+const normalizeVoiceInput = (rawValue: number, range: [number, number]) => {
+  const min = Math.min(range[0], range[1]);
+  const max = Math.max(range[0], range[1]);
+  if (max === min) return 0;
+  return clamp(((rawValue - min) / (max - min)) * 255, 0, 255);
+};
+
+const getSemitones = (scale: Scale, normalizedValue: number, octaveSpan: number, degreeBias: number) => {
+  // Map 0-255 to scale degrees over a configurable octave span.
+  const steps = Math.max(7, Math.floor(octaveSpan) * 7);
+  const degree = Math.floor((clamp(normalizedValue, 0, 255) / 255) * steps) + Math.trunc(degreeBias);
   const octave = Math.floor(degree / 7);
-  const noteIndex = degree % 7;
+  const noteIndex = ((degree % 7) + 7) % 7;
   return octave * 12 + scale.intervals[noteIndex];
 };
 
@@ -89,18 +162,15 @@ const midiNoteToName = (midiNote: number) => {
   return `${name}${octave}`;
 };
 
-const getFrequency = (scale: Scale, value: number, baseFrequency: number) => {
-  const semitones = getSemitones(scale, value);
-  return baseFrequency * Math.pow(2, semitones / 12);
-};
-
-const getMidiNote = (scale: Scale, value: number, baseMidiNote: number) => {
-  const semitones = getSemitones(scale, value);
+const getMidiNote = (scale: Scale, normalizedValue: number, baseMidiNote: number, octaveSpan: number, degreeBias: number) => {
+  const semitones = getSemitones(scale, normalizedValue, octaveSpan, degreeBias);
   return baseMidiNote + semitones;
 };
 
-const getScaleDegree = (value: number) => {
-  return (Math.floor((value / 255) * 21) % 7) + 1;
+const getScaleDegree = (normalizedValue: number, octaveSpan: number, degreeBias: number) => {
+  const steps = Math.max(7, Math.floor(octaveSpan) * 7);
+  const degree = Math.floor((clamp(normalizedValue, 0, 255) / 255) * steps) + Math.trunc(degreeBias);
+  return ((degree % 7) + 7) % 7 + 1;
 };
 
 const getDegreeFromSum = (sum: number) => {
@@ -122,12 +192,7 @@ const stepDegreeToward = (from: number, to: number) => {
   return from < to ? from + 1 : from - 1;
 };
 
-const selectPedalDegree = (rDegree: number, gDegree: number, bDegree: number, rgbSum: number) => {
-  const degrees = [rDegree, gDegree, bDegree];
-  if (degrees.includes(1)) return 1;
-  const repeated = getRepeatedDegree(degrees);
-  return repeated ?? getDegreeFromSum(rgbSum);
-};
+const getClassicRgbDegree = (value: number) => getScaleDegree(value, DEFAULT_OCTAVE_SPAN, 0);
 
 // --- Components ---
 
@@ -137,6 +202,7 @@ export default function App() {
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const [currentRGB, setCurrentRGB] = useState({ r: 0, g: 0, b: 0 });
+  const [currentHSB, setCurrentHSB] = useState<HsbColor>({ h: 0, s: 0, v: 0 });
   const [isAudioStarted, setIsAudioStarted] = useState(false);
   const [isArpEnabled, setIsArpEnabled] = useState(false);
   const [arpIndex, setArpIndex] = useState(0);
@@ -150,6 +216,7 @@ export default function App() {
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
   const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
   const [oscillatorVolume, setOscillatorVolume] = useState(50);
+  const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
 
   const {
     enable: enableMidi,
@@ -168,12 +235,10 @@ export default function App() {
   const oscillatorsRef = useRef<OscillatorNode[]>([]);
   const gainNodesRef = useRef<GainNode[]>([]);
   const masterGainRef = useRef<GainNode | null>(null);
-  const activeMidiNotesRef = useRef<ActiveVoiceNote[]>([
-    { voice: 0, note: null },
-    { voice: 1, note: null },
-    { voice: 2, note: null },
-  ]);
-  const latestMidiNotesRef = useRef<number[] | null>(null);
+  const activeMidiNotesRef = useRef<ActiveVoiceNote[]>(
+    MELODIC_VOICES.map((voice) => ({ voice: voice.id, note: null })),
+  );
+  const latestMidiNotesRef = useRef<Record<VoiceId, number> | null>(null);
   const latestRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
   const previousMidiOutputRef = useRef<string>('');
   const activePedalNoteRef = useRef<number | null>(null);
@@ -186,8 +251,11 @@ export default function App() {
     edgeFlip: false,
   });
   const shouldUseWebAudio = !(disableWebAudioWithMidi && midiStatus === 'ready');
-  const baseFrequency = midiNoteToFrequency(baseMidiNote);
   const webAudioTargetGain = oscillatorVolume / 100;
+  const enabledVoiceIds = useMemo(
+    () => MELODIC_VOICES.filter((voice) => voiceMappingConfig[voice.id].enabled).map((voice) => voice.id),
+    [voiceMappingConfig],
+  );
 
   // Initialize Audio
   const initAudio = useCallback(() => {
@@ -202,14 +270,16 @@ export default function App() {
     masterGain.connect(ctx.destination);
     masterGainRef.current = masterGain;
 
-    // Create 4 oscillators: 3 for R/G/B plus 1 pedal oscillator.
-    for (let i = 0; i < 4; i++) {
+    // Create oscillators for all melodic voices plus the pedal oscillator.
+    for (let i = 0; i < TOTAL_OSCILLATORS; i++) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
+      const voice = MELODIC_VOICES[i];
+      const isPedal = i === PEDAL_OSC_INDEX;
 
-      osc.type = i === PEDAL_OSC_INDEX ? 'triangle' : 'square'; // sine | square | sawtooth | triangle
-      osc.detune.setValueAtTime(OSC_DETUNE_CENTS[i] ?? 0, ctx.currentTime);
-      gain.gain.setValueAtTime(i === PEDAL_OSC_INDEX ? 0 : RGB_OSC_GAIN, ctx.currentTime);
+      osc.type = isPedal ? 'triangle' : 'square'; // sine | square | sawtooth | triangle
+      osc.detune.setValueAtTime(isPedal ? PEDAL_OSC_DETUNE_CENTS : (voice?.detuneCents ?? 0), ctx.currentTime);
+      gain.gain.setValueAtTime(isPedal ? 0 : (voice?.gain ?? MELODIC_OSC_GAIN), ctx.currentTime);
 
       osc.connect(gain);
       gain.connect(masterGain);
@@ -335,7 +405,7 @@ export default function App() {
     (r: number, g: number, b: number, advanceState: boolean) => {
       if (!isPedalToneEnabled) return null;
 
-      const degrees = [getScaleDegree(r), getScaleDegree(g), getScaleDegree(b)];
+      const degrees = [getClassicRgbDegree(r), getClassicRgbDegree(g), getClassicRgbDegree(b)];
       const repeatedDegree = getRepeatedDegree(degrees);
       const hasTonic = degrees.includes(1);
       const classicDegree = hasTonic ? 1 : repeatedDegree ?? getDegreeFromSum(r + g + b);
@@ -417,6 +487,45 @@ export default function App() {
     [isPedalToneEnabled, pedalPersonality],
   );
 
+  const getRawVoiceValue = useCallback((voiceId: VoiceId, r: number, g: number, b: number, hsb: HsbColor) => {
+    switch (voiceId) {
+      case 'r':
+        return r;
+      case 'g':
+        return g;
+      case 'b':
+        return b;
+      case 'h':
+        return (clamp(hsb.h, 0, 360) / 360) * 255;
+      case 's':
+        return clamp(hsb.s, 0, 1) * 255;
+      case 'v':
+        return clamp(hsb.v, 0, 1) * 255;
+      default:
+        return 0;
+    }
+  }, []);
+
+  const getVoiceMidiNotes = useCallback(
+    (r: number, g: number, b: number, hsb: HsbColor) => {
+      return MELODIC_VOICES.reduce((notes, voice) => {
+        const config = voiceMappingConfig[voice.id];
+        const rawValue = getRawVoiceValue(voice.id, r, g, b, hsb);
+        const normalizedValue = normalizeVoiceInput(rawValue, config.inputRange);
+        const note = getMidiNote(
+          currentScale,
+          normalizedValue,
+          baseMidiNote,
+          config.octaveSpan,
+          config.degreeBias,
+        );
+        notes[voice.id] = clamp(note, 0, 127);
+        return notes;
+      }, {} as Record<VoiceId, number>);
+    },
+    [baseMidiNote, currentScale, getRawVoiceValue, voiceMappingConfig],
+  );
+
   const getPedalMidiNote = useCallback(
     (r: number, g: number, b: number, advanceState: boolean) => {
       const pedalDegree = resolvePedalDegree(r, g, b, advanceState);
@@ -430,21 +539,34 @@ export default function App() {
     [baseMidiNote, currentScale.intervals, pedalOctaveMultiplier, resolvePedalDegree],
   );
   const updateFrequencies = useCallback(
-    (r: number, g: number, b: number) => {
+    (r: number, g: number, b: number, hsb: HsbColor) => {
       if (!audioCtxRef.current || !isAudioStarted || !shouldUseWebAudio) return;
 
-      const values = [r, g, b];
+      const midiNotes = getVoiceMidiNotes(r, g, b, hsb);
+      const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
       const now = audioCtxRef.current.currentTime;
 
-      VOICES.forEach((i) => {
-        const osc = oscillatorsRef.current[i];
+      MELODIC_VOICES.forEach((voice, index) => {
+        const osc = oscillatorsRef.current[index];
+        const gain = gainNodesRef.current[index];
+        const isEnabled = voiceMappingConfig[voice.id].enabled;
         if (!osc) return;
-        const freq = getFrequency(currentScale, values[i], baseFrequency);
-        osc.frequency.setTargetAtTime(freq, now, 0.05);
 
-        // If not in arpeggiator mode, ensure all gains are up
-        if (!isArpEnabled && gainNodesRef.current[i]) {
-          gainNodesRef.current[i].gain.setTargetAtTime(RGB_OSC_GAIN, now, 0.05);
+        osc.frequency.setTargetAtTime(midiNoteToFrequency(midiNotes[voice.id]), now, 0.05);
+        if (!gain) return;
+
+        if (!isEnabled) {
+          gain.gain.setTargetAtTime(0, now, 0.05);
+          return;
+        }
+
+        if (!isArpEnabled) {
+          gain.gain.setTargetAtTime(voice.gain, now, 0.05);
+          return;
+        }
+
+        if (activeArpVoiceId === null) {
+          gain.gain.setTargetAtTime(0, now, 0.05);
         }
       });
 
@@ -460,23 +582,22 @@ export default function App() {
         }
       }
     },
-    [baseFrequency, currentScale, getPedalMidiNote, isArpEnabled, isAudioStarted, isMouseDown, shouldUseWebAudio],
-  );
-
-  const getMidiNotes = useCallback(
-    (r: number, g: number, b: number) => {
-      return [
-        getMidiNote(currentScale, r, baseMidiNote),
-        getMidiNote(currentScale, g, baseMidiNote),
-        getMidiNote(currentScale, b, baseMidiNote),
-      ];
-    },
-    [baseMidiNote, currentScale],
+    [
+      arpIndex,
+      enabledVoiceIds,
+      getPedalMidiNote,
+      getVoiceMidiNotes,
+      isArpEnabled,
+      isAudioStarted,
+      isMouseDown,
+      shouldUseWebAudio,
+      voiceMappingConfig,
+    ],
   );
 
   const setVoiceMidiNote = useCallback(
-    (voice: VoiceIndex, nextNote: number | null) => {
-      const activeVoice = activeMidiNotesRef.current[voice];
+    (voice: VoiceId, nextNote: number | null) => {
+      const activeVoice = activeMidiNotesRef.current.find((entry) => entry.voice === voice);
       if (!activeVoice || activeVoice.note === nextNote) return;
 
       if (activeVoice.note !== null) {
@@ -520,34 +641,43 @@ export default function App() {
   );
 
   const applyMidiNotes = useCallback(
-    (notes: number[], pedalNote: number | null) => {
-      if (notes.length < 3) return;
+    (notes: Record<VoiceId, number>, pedalNote: number | null) => {
+      const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
 
-      if (isArpEnabled) {
-        VOICES.forEach((voice) => {
-          const nextNote = voice === arpIndex ? notes[voice] : null;
-          setVoiceMidiNote(voice, nextNote);
-        });
-      } else {
-        VOICES.forEach((voice) => {
-          setVoiceMidiNote(voice, notes[voice]);
-        });
-      }
+      MELODIC_VOICES.forEach((voice) => {
+        const isEnabled = voiceMappingConfig[voice.id].enabled;
+        const nextNote = !isEnabled
+          ? null
+          : isArpEnabled
+            ? voice.id === activeArpVoiceId
+              ? notes[voice.id]
+              : null
+            : notes[voice.id];
+        setVoiceMidiNote(voice.id, nextNote);
+      });
 
       setPedalMidiNote(pedalNote);
     },
-    [arpIndex, isArpEnabled, setPedalMidiNote, setVoiceMidiNote],
+    [arpIndex, enabledVoiceIds, isArpEnabled, setPedalMidiNote, setVoiceMidiNote, voiceMappingConfig],
   );
 
   // Arpeggiator Loop
+  useEffect(() => {
+    if (enabledVoiceIds.length === 0) {
+      setArpIndex(0);
+      return;
+    }
+    setArpIndex((prev) => prev % enabledVoiceIds.length);
+  }, [enabledVoiceIds.length]);
+
   useEffect(() => {
     if (!isArpEnabled || !isMouseDown || !isAudioStarted) {
       // Reset gains if arp is disabled but mouse is down (back to chord mode)
       if (!isArpEnabled && isMouseDown && audioCtxRef.current) {
         const now = audioCtxRef.current.currentTime;
-        VOICES.forEach((voice) => {
-          const gainNode = gainNodesRef.current[voice];
-          gainNode?.gain.setTargetAtTime(RGB_OSC_GAIN, now, 0.05);
+        MELODIC_VOICES.forEach((voice, index) => {
+          const gainNode = gainNodesRef.current[index];
+          gainNode?.gain.setTargetAtTime(voiceMappingConfig[voice.id].enabled ? voice.gain : 0, now, 0.05);
         });
         const pedalGain = gainNodesRef.current[PEDAL_OSC_INDEX];
         if (pedalGain) {
@@ -557,22 +687,26 @@ export default function App() {
       return;
     }
 
+    if (enabledVoiceIds.length === 0) return;
+
     const interval = setInterval(() => {
-      setArpIndex((prev) => (prev + 1) % 3);
+      setArpIndex((prev) => (prev + 1) % enabledVoiceIds.length);
     }, arpSpeed);
 
     return () => clearInterval(interval);
-  }, [arpSpeed, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled]);
+  }, [arpSpeed, enabledVoiceIds.length, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled, voiceMappingConfig]);
 
   // Update gains based on arpIndex
   useEffect(() => {
     if (!isArpEnabled || !isMouseDown || !audioCtxRef.current) return;
 
+    const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
     const now = audioCtxRef.current.currentTime;
-    VOICES.forEach((voice) => {
-      const gainNode = gainNodesRef.current[voice];
+    MELODIC_VOICES.forEach((voice, index) => {
+      const gainNode = gainNodesRef.current[index];
       if (!gainNode) return;
-      const targetGain = voice === arpIndex ? 0.4 : 0;
+      const targetGain =
+        voiceMappingConfig[voice.id].enabled && voice.id === activeArpVoiceId ? ARP_ACTIVE_GAIN : 0;
       gainNode.gain.setTargetAtTime(targetGain, now, 0.02);
     });
 
@@ -580,14 +714,14 @@ export default function App() {
     if (pedalGain) {
       pedalGain.gain.setTargetAtTime(isPedalToneEnabled ? PEDAL_OSC_GAIN : 0, now, 0.02);
     }
-  }, [arpIndex, isArpEnabled, isMouseDown, isPedalToneEnabled]);
+  }, [arpIndex, enabledVoiceIds, isArpEnabled, isMouseDown, isPedalToneEnabled, voiceMappingConfig]);
 
   // Update MIDI note allocation when arp/chord mode changes.
   useEffect(() => {
     if (!isMouseDown || !latestMidiNotesRef.current || !latestRgbRef.current) return;
     const { r, g, b } = latestRgbRef.current;
     applyMidiNotes(latestMidiNotesRef.current, getPedalMidiNote(r, g, b, false));
-  }, [applyMidiNotes, arpIndex, baseMidiNote, currentScale, getPedalMidiNote, isArpEnabled, isMouseDown, isPedalToneEnabled, pedalOctaveMultiplier]);
+  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, voiceMappingConfig]);
 
   const sampleColor = useCallback(
     (x: number, y: number, emitMidi: boolean) => {
@@ -600,18 +734,20 @@ export default function App() {
       const r = pixel[0];
       const g = pixel[1];
       const b = pixel[2];
+      const hsb = rgbToHsb(r, g, b);
 
       setCurrentRGB({ r, g, b });
+      setCurrentHSB(hsb);
       latestRgbRef.current = { r, g, b };
-      updateFrequencies(r, g, b);
+      updateFrequencies(r, g, b, hsb);
 
       if (!emitMidi) return;
 
-      const midiNotes = getMidiNotes(r, g, b);
+      const midiNotes = getVoiceMidiNotes(r, g, b, hsb);
       latestMidiNotesRef.current = midiNotes;
       applyMidiNotes(midiNotes, getPedalMidiNote(r, g, b, true));
     },
-    [applyMidiNotes, getMidiNotes, getPedalMidiNote, updateFrequencies],
+    [applyMidiNotes, getPedalMidiNote, getVoiceMidiNotes, updateFrequencies],
   );
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -733,6 +869,37 @@ export default function App() {
     unsupported: 'unsupported',
   };
 
+  const setVoiceEnabled = useCallback((voiceId: VoiceId, enabled: boolean) => {
+    setVoiceMappingConfig((prev) => ({
+      ...prev,
+      [voiceId]: {
+        ...prev[voiceId],
+        enabled,
+      },
+    }));
+  }, []);
+
+  const liveVoiceRows = useMemo(() => {
+    return MELODIC_VOICES.map((voice) => {
+      const config = voiceMappingConfig[voice.id];
+      const rawValue = getRawVoiceValue(voice.id, currentRGB.r, currentRGB.g, currentRGB.b, currentHSB);
+      const normalizedValue = normalizeVoiceInput(rawValue, config.inputRange);
+      const midiNote = clamp(
+        getMidiNote(currentScale, normalizedValue, baseMidiNote, config.octaveSpan, config.degreeBias),
+        0,
+        127,
+      );
+      return {
+        id: voice.id,
+        label: voice.label,
+        source: voice.source,
+        enabled: config.enabled,
+        degree: getScaleDegree(normalizedValue, config.octaveSpan, config.degreeBias),
+        noteName: midiNoteToName(midiNote),
+      };
+    });
+  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getRawVoiceValue, voiceMappingConfig]);
+
   const previewPedalDegree = resolvePedalDegree(currentRGB.r, currentRGB.g, currentRGB.b, false);
   const previewPedalSemitones = previewPedalDegree ? currentScale.intervals[previewPedalDegree - 1] : null;
   const previewPedalBaseNote = previewPedalSemitones !== null ? baseMidiNote + previewPedalSemitones : null;
@@ -818,7 +985,8 @@ export default function App() {
                   <option value="2">2x</option>
                   <option value="3">3x</option>
                 </select>
-              </div>              <div className="space-y-1">
+              </div>
+              <div className="space-y-1">
                 <div className="text-[10px] text-zinc-500 uppercase">Pedal Personality</div>
                 <select
                   value={pedalPersonality}
@@ -833,6 +1001,36 @@ export default function App() {
                   ))}
                 </select>
               </div>
+              <div className="pt-3 border-t border-white/5 space-y-2">
+                <div className="text-[10px] text-zinc-500 uppercase">HSB Voices</div>
+                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
+                  <span>Hue Note</span>
+                  <input
+                    type="checkbox"
+                    checked={voiceMappingConfig.h.enabled}
+                    onChange={(e) => setVoiceEnabled('h', e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
+                  <span>Saturation Note</span>
+                  <input
+                    type="checkbox"
+                    checked={voiceMappingConfig.s.enabled}
+                    onChange={(e) => setVoiceEnabled('s', e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs text-zinc-300">
+                  <span>Brightness Note</span>
+                  <input
+                    type="checkbox"
+                    checked={voiceMappingConfig.v.enabled}
+                    onChange={(e) => setVoiceEnabled('v', e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+              </div>
             </div>
           </section>
           
@@ -842,30 +1040,19 @@ export default function App() {
               <Info className="w-4 h-4" />
               <h2 className="text-xs font-bold uppercase tracking-widest">Live Data</h2>
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Red</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.r}</div>
-              </div>
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Green</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.g}</div>
-              </div>
-              <div className="bg-black/40 rounded-xl p-3 border border-white/5 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase mb-1">Blue</div>
-                <div className="text-xl font-mono text-emerald-400">{currentRGB.b}</div>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-white/5">
-              <div className="text-[10px] text-zinc-500 uppercase mb-3 text-center">Current Degrees</div>
-              <div className="flex justify-center gap-4 text-3xl font-mono font-bold text-white">
-                <span>{getScaleDegree(currentRGB.r)}</span>
-                <span className="text-zinc-700">/</span>
-                <span>{getScaleDegree(currentRGB.g)}</span>
-                <span className="text-zinc-700">/</span>
-                <span>{getScaleDegree(currentRGB.b)}</span>
-              </div>
+            <div className="space-y-2">
+              {liveVoiceRows.map((voice) => (
+                <div key={voice.id} className="bg-black/40 rounded-xl p-3 border border-white/5">
+                  <div className="flex items-center justify-between text-[10px] uppercase text-zinc-500">
+                    <span>{voice.label}</span>
+                    <span>{voice.source}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between font-mono">
+                    <span className="text-zinc-200">{voice.enabled ? voice.noteName : 'Muted'}</span>
+                    <span className="text-emerald-400">Degree {voice.degree}</span>
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="pt-4 border-t border-white/5">
               <div className="text-[10px] text-zinc-500 uppercase mb-2 text-center">Pedal Tone</div>
@@ -906,7 +1093,7 @@ export default function App() {
                   className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
                 />
                 <div className="flex gap-1 justify-center">
-                  {[0, 1, 2].map((i) => (
+                  {Array.from({ length: Math.max(1, enabledVoiceIds.length) }, (_, i) => i).map((i) => (
                     <div
                       key={i}
                       className={`h-1 flex-1 rounded-full transition-colors ${isMouseDown && arpIndex === i ? 'bg-emerald-400' : 'bg-zinc-800'}`}

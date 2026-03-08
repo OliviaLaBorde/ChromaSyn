@@ -2,18 +2,19 @@
 
 ChromaSyn is a browser-based image sonification instrument.
 
-It maps pixel color (RGB) to notes in a selected modal scale, then outputs:
-- Internal Web Audio synthesis (4 oscillators: R, G, B, and optional pedal tone)
+It maps pixel color (RGB + HSB) to notes in a selected modal scale, then outputs:
+- Internal Web Audio synthesis (up to 7 oscillators: 6 melodic voices `R/G/B/H/S/V` plus optional pedal tone)
 - Web MIDI note events for routing into a DAW and soft synths
 
 ## Features
 
 - Load your own image or use built-in gradient presets
-- Hover the canvas to preview live RGB + scale degree data
+- Hover the canvas to preview live per-voice note and scale degree data
 - Click/drag to perform notes from sampled pixels
 - Modal scale selector (Ionian, Dorian, Phrygian, etc.)
 - Base note selector (shared by audio + MIDI mapping)
-- Arpeggiator mode for RGB voices
+- Arpeggiator mode for all enabled melodic voices
+- Individual HSB voice toggles (Hue, Saturation, Brightness)
 - MIDI output device picker (Web MIDI)
 - Adjustable MIDI velocity
 - Optional pedal tone with octave selector (`1x`, `2x`, `3x`)
@@ -21,7 +22,7 @@ It maps pixel color (RGB) to notes in a selected modal scale, then outputs:
 
 ## How It Works
 
-- R, G, B values are quantized to scale degrees across ~3 octaves.
+- R, G, B, Hue, Saturation, and Brightness values are quantized to scale degrees across ~3 octaves.
 - Each channel drives one melodic voice.
 - Pedal tone (when enabled) follows this rule:
   1. If any voice is degree `1`, pedal uses `1`
@@ -60,7 +61,8 @@ Default dev URL:
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
 - **Enable Pedal Tone**: adds a sustained pedal voice
 - **Pedal Octave**: pedal register (`1x` highest, `3x` lowest)
-- **Arpeggiator**: cycles RGB voices while held
+- **HSB Voices**: toggle Hue/Saturation/Brightness notes on/off
+- **Arpeggiator**: cycles all enabled melodic voices while held
 - **MIDI Velocity**: note-on velocity (1-127)
 - **Mute web audio when MIDI ready**: prevents doubling when using DAW synths
 
@@ -75,5 +77,4 @@ Default dev URL:
 - Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
 - Custom chord mapping - dictate your own chord set and map the image to only those!
 - Chord hold and sustain with a hotkey to allow you to search for new chords with the mouse - note will sustain until next click
-- HSB mapping for even more notes!
 - Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
