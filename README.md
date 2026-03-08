@@ -75,4 +75,5 @@ Default dev URL:
 - Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
 - Custom chord mapping - dictate your own chord set and map the image to only those!
 - Chord hold and sustain with a hotkey to allow you to search for new chords with the mouse - note will sustain until next click
-- 
+- HSB mapping for even more notes!
+- Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
