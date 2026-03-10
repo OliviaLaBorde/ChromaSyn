@@ -63,6 +63,7 @@ Default dev URL:
 - **Pedal Octave**: pedal register (`1x` highest, `3x` lowest)
 - **HSB Voices**: toggle Hue/Saturation/Brightness notes on/off
 - **Arpeggiator**: cycles all enabled melodic voices while held
+- **Sustain Hold (`Space`)**: hold active chord/pedal while exploring; click to replace
 - **MIDI Velocity**: note-on velocity (1-127)
 - **Mute web audio when MIDI ready**: prevents doubling when using DAW synths
 
@@ -76,5 +77,4 @@ Default dev URL:
 ## What's coming next!
 - Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
 - Custom chord mapping - dictate your own chord set and map the image to only those!
-- Chord hold and sustain with a hotkey to allow you to search for new chords with the mouse - note will sustain until next click
 - Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad

@@ -203,6 +203,8 @@ export default function App() {
   const [image, setImage] = useState<string | null>(null);
   const [currentScale, setCurrentScale] = useState<Scale>(SCALES[0]);
   const [isMouseDown, setIsMouseDown] = useState(false);
+  const [isSustainKeyDown, setIsSustainKeyDown] = useState(false);
+  const [isSustainLatched, setIsSustainLatched] = useState(false);
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
   const [currentRGB, setCurrentRGB] = useState({ r: 0, g: 0, b: 0 });
   const [currentHSB, setCurrentHSB] = useState<HsbColor>({ h: 0, s: 0, v: 0 });
@@ -253,6 +255,8 @@ export default function App() {
   const latestRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
   const previousMidiOutputRef = useRef<string>('');
   const activePedalNoteRef = useRef<number | null>(null);
+  const heldVoiceNotesRef = useRef<Partial<Record<VoiceId, number>> | null>(null);
+  const heldPedalNoteRef = useRef<number | null>(null);
   const pedalDegreeRef = useRef<number | null>(null);
   const pedalPersonalityMemoryRef = useRef({
     anchorCandidate: null as number | null,
@@ -263,6 +267,8 @@ export default function App() {
   });
   const shouldUseWebAudio = !(disableWebAudioWithMidi && midiStatus === 'ready');
   const webAudioTargetGain = oscillatorVolume / 100;
+  const shouldKeepNotesActive = isMouseDown || isSustainLatched;
+  const shouldFreezeArp = isSustainLatched;
   const enabledVoiceIds = useMemo(
     () => MELODIC_VOICES.filter((voice) => voiceMappingConfig[voice.id].enabled).map((voice) => voice.id),
     [voiceMappingConfig],
@@ -634,7 +640,19 @@ export default function App() {
       sendNoteOff(activePedalNoteRef.current);
       activePedalNoteRef.current = null;
     }
+    heldVoiceNotesRef.current = null;
+    heldPedalNoteRef.current = null;
   }, [sendNoteOff]);
+
+  const captureHeldNotes = useCallback(() => {
+    heldVoiceNotesRef.current = activeMidiNotesRef.current.reduce((acc, voiceState) => {
+      if (voiceState.note !== null) {
+        acc[voiceState.voice] = voiceState.note;
+      }
+      return acc;
+    }, {} as Partial<Record<VoiceId, number>>);
+    heldPedalNoteRef.current = activePedalNoteRef.current;
+  }, []);
 
   const setPedalMidiNote = useCallback(
     (nextNote: number | null) => {
@@ -668,8 +686,11 @@ export default function App() {
       });
 
       setPedalMidiNote(pedalNote);
+      if (isSustainLatched || isSustainKeyDown) {
+        captureHeldNotes();
+      }
     },
-    [arpIndex, enabledVoiceIds, isArpEnabled, setPedalMidiNote, setVoiceMidiNote, voiceMappingConfig],
+    [arpIndex, captureHeldNotes, enabledVoiceIds, isArpEnabled, isSustainKeyDown, isSustainLatched, setPedalMidiNote, setVoiceMidiNote, voiceMappingConfig],
   );
 
   // Arpeggiator Loop
@@ -682,7 +703,7 @@ export default function App() {
   }, [enabledVoiceIds.length]);
 
   useEffect(() => {
-    if (!isArpEnabled || !isMouseDown || !isAudioStarted) {
+    if (!isArpEnabled || !isMouseDown || !isAudioStarted || shouldFreezeArp) {
       // Reset gains if arp is disabled but mouse is down (back to chord mode)
       if (!isArpEnabled && isMouseDown && audioCtxRef.current) {
         const now = audioCtxRef.current.currentTime;
@@ -705,11 +726,11 @@ export default function App() {
     }, arpSpeed);
 
     return () => clearInterval(interval);
-  }, [arpSpeed, enabledVoiceIds.length, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled, voiceMappingConfig]);
+  }, [arpSpeed, enabledVoiceIds.length, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
   // Update gains based on arpIndex
   useEffect(() => {
-    if (!isArpEnabled || !isMouseDown || !audioCtxRef.current) return;
+    if (!isArpEnabled || !isMouseDown || !audioCtxRef.current || shouldFreezeArp) return;
 
     const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
     const now = audioCtxRef.current.currentTime;
@@ -725,7 +746,7 @@ export default function App() {
     if (pedalGain) {
       pedalGain.gain.setTargetAtTime(isPedalToneEnabled ? PEDAL_OSC_GAIN : 0, now, 0.02);
     }
-  }, [arpIndex, enabledVoiceIds, isArpEnabled, isMouseDown, isPedalToneEnabled, voiceMappingConfig]);
+  }, [arpIndex, enabledVoiceIds, isArpEnabled, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
   // Update MIDI note allocation when arp/chord mode changes.
   useEffect(() => {
@@ -750,7 +771,9 @@ export default function App() {
       setCurrentRGB({ r, g, b });
       setCurrentHSB(hsb);
       latestRgbRef.current = { r, g, b };
-      updateFrequencies(r, g, b, hsb);
+      if (emitMidi) {
+        updateFrequencies(r, g, b, hsb);
+      }
 
       if (!emitMidi) return;
 
@@ -795,6 +818,11 @@ export default function App() {
       sampleColor(x, y, true);
     }
 
+    if (isSustainKeyDown) {
+      setIsSustainLatched(true);
+      captureHeldNotes();
+    }
+
     if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current) {
       masterGainRef.current.gain.setTargetAtTime(webAudioTargetGain, audioCtxRef.current.currentTime, 0.1);
     }
@@ -802,13 +830,15 @@ export default function App() {
 
   const handleMouseUp = useCallback(() => {
     setIsMouseDown(false);
-    clearActiveMidiNotes();
+    if (!isSustainLatched) {
+      clearActiveMidiNotes();
+    }
     resetPedalPersonalityState();
 
-    if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current) {
+    if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current && !isSustainLatched) {
       masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.1);
     }
-  }, [clearActiveMidiNotes, resetPedalPersonalityState, shouldUseWebAudio]);
+  }, [clearActiveMidiNotes, isSustainLatched, resetPedalPersonalityState, shouldUseWebAudio]);
 
 
   useEffect(() => {
@@ -837,11 +867,50 @@ export default function App() {
   }, [clearActiveMidiNotes, panic]);
 
   useEffect(() => {
+    const hasActiveNotes = () => {
+      return (
+        activeMidiNotesRef.current.some((voiceState) => voiceState.note !== null) ||
+        activePedalNoteRef.current !== null
+      );
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return;
+      event.preventDefault();
+      if (!isSustainKeyDown) {
+        setIsSustainKeyDown(true);
+      }
+      if (hasActiveNotes()) {
+        setIsSustainLatched(true);
+        captureHeldNotes();
+      }
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return;
+      event.preventDefault();
+      setIsSustainKeyDown(false);
+      setIsSustainLatched(false);
+
+      if (!isMouseDown) {
+        clearActiveMidiNotes();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [captureHeldNotes, clearActiveMidiNotes, isMouseDown, isSustainKeyDown]);
+
+  useEffect(() => {
     if (!masterGainRef.current || !audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
-    const targetGain = shouldUseWebAudio && isMouseDown ? webAudioTargetGain : 0;
+    const targetGain = shouldUseWebAudio && shouldKeepNotesActive ? webAudioTargetGain : 0;
     masterGainRef.current.gain.setTargetAtTime(targetGain, now, 0.05);
-  }, [isMouseDown, shouldUseWebAudio, webAudioTargetGain]);
+  }, [shouldKeepNotesActive, shouldUseWebAudio, webAudioTargetGain]);
 
   useEffect(() => {
     if (image && canvasRef.current) {
@@ -958,6 +1027,9 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            <div className={`text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full border ${isSustainLatched ? 'text-emerald-300 border-emerald-400/40 bg-emerald-500/15' : 'text-zinc-400 border-white/10 bg-white/5'}`}>
+              Sustain: {isSustainLatched ? 'Active' : 'Hold Space'}
+            </div>
             <label className="flex items-center gap-2 px-4 py-2 bg-pink-500 hover:bg-pink-400 text-white rounded-lg cursor-pointer transition-all active:scale-95 font-medium text-sm border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.45)]">
               <Upload className="w-4 h-4" />
               <span>Load Image</span>
@@ -1353,12 +1425,6 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
 
 
 
