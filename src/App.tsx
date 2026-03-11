@@ -1498,7 +1498,7 @@ export default function App() {
                   <div
                     className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
                       isMouseDown
-                        ? 'scale-125 border-emerald-400 bg-emerald-400/20 shadow-[0_0_20px_rgba(52,211,153,0.4)]'
+                        ? 'scale-125 border-pink-400 bg-pink-400/20 shadow-[0_0_20px_rgba(244,114,182,0.45)]'
                         : 'border-white/50 bg-white/10'
                     }`}
                   >
@@ -1554,7 +1554,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 
