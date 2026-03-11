@@ -39,6 +39,7 @@ type VoiceMappingById = Record<VoiceId, VoiceMappingConfig>;
 
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
 type ControlPanelId = 'scale' | 'arp' | 'audio' | 'midi';
+type FilterMode = 'lowpass' | 'highpass';
 
 const SCALES: Scale[] = [
   { name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11] },
@@ -99,6 +100,7 @@ const PRESETS = [
 ];
 
 const PANEL_SHELL_CLASS = 'bg-white/5 rounded-xl p-4 border border-white/10';
+const OSCILLATOR_TYPE_OPTIONS: OscillatorType[] = ['sine', 'square', 'sawtooth', 'triangle'];
 
 // --- Helper Functions ---
 
@@ -221,6 +223,11 @@ export default function App() {
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
   const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
   const [oscillatorVolume, setOscillatorVolume] = useState(50);
+  const [oscillatorType, setOscillatorType] = useState<OscillatorType>('square');
+  const [isMasterFilterEnabled, setIsMasterFilterEnabled] = useState(false);
+  const [masterFilterMode, setMasterFilterMode] = useState<FilterMode>('lowpass');
+  const [masterFilterCutoff, setMasterFilterCutoff] = useState(1800);
+  const [masterFilterResonance, setMasterFilterResonance] = useState(1);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
   const [openPanels, setOpenPanels] = useState<Record<ControlPanelId, boolean>>({
     scale: true,
@@ -247,6 +254,7 @@ export default function App() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const oscillatorsRef = useRef<OscillatorNode[]>([]);
   const gainNodesRef = useRef<GainNode[]>([]);
+  const masterFilterRef = useRef<BiquadFilterNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const activeMidiNotesRef = useRef<ActiveVoiceNote[]>(
     MELODIC_VOICES.map((voice) => ({ voice: voice.id, note: null })),
@@ -284,7 +292,13 @@ export default function App() {
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, ctx.currentTime);
+    const masterFilter = ctx.createBiquadFilter();
+    masterFilter.type = 'allpass';
+    masterFilter.frequency.setValueAtTime(masterFilterCutoff, ctx.currentTime);
+    masterFilter.Q.setValueAtTime(masterFilterResonance, ctx.currentTime);
+    masterFilter.connect(masterGain);
     masterGain.connect(ctx.destination);
+    masterFilterRef.current = masterFilter;
     masterGainRef.current = masterGain;
 
     // Create oscillators for all melodic voices plus the pedal oscillator.
@@ -294,12 +308,12 @@ export default function App() {
       const voice = MELODIC_VOICES[i];
       const isPedal = i === PEDAL_OSC_INDEX;
 
-      osc.type = isPedal ? 'triangle' : 'square'; // sine | square | sawtooth | triangle
+      osc.type = isPedal ? 'triangle' : oscillatorType; // sine | square | sawtooth | triangle
       osc.detune.setValueAtTime(isPedal ? PEDAL_OSC_DETUNE_CENTS : (voice?.detuneCents ?? 0), ctx.currentTime);
       gain.gain.setValueAtTime(isPedal ? 0 : (voice?.gain ?? MELODIC_OSC_GAIN), ctx.currentTime);
 
       osc.connect(gain);
-      gain.connect(masterGain);
+      gain.connect(masterFilter);
       osc.start();
 
       oscillatorsRef.current.push(osc);
@@ -307,7 +321,7 @@ export default function App() {
     }
 
     setIsAudioStarted(true);
-  }, []);
+  }, [masterFilterCutoff, masterFilterResonance, oscillatorType]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -906,6 +920,26 @@ export default function App() {
   }, [captureHeldNotes, clearActiveMidiNotes, isMouseDown, isSustainKeyDown]);
 
   useEffect(() => {
+    if (!isAudioStarted || !audioCtxRef.current) return;
+    const now = audioCtxRef.current.currentTime;
+    MELODIC_VOICES.forEach((_, index) => {
+      const osc = oscillatorsRef.current[index];
+      if (!osc) return;
+      osc.type = oscillatorType;
+      osc.frequency.setTargetAtTime(osc.frequency.value, now, 0.01);
+    });
+  }, [isAudioStarted, oscillatorType]);
+
+  useEffect(() => {
+    if (!masterFilterRef.current || !audioCtxRef.current) return;
+    const now = audioCtxRef.current.currentTime;
+    const filter = masterFilterRef.current;
+    filter.type = isMasterFilterEnabled ? masterFilterMode : 'allpass';
+    filter.frequency.setTargetAtTime(masterFilterCutoff, now, 0.03);
+    filter.Q.setTargetAtTime(masterFilterResonance, now, 0.03);
+  }, [isMasterFilterEnabled, masterFilterCutoff, masterFilterMode, masterFilterResonance]);
+
+  useEffect(() => {
     if (!masterGainRef.current || !audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
     const targetGain = shouldUseWebAudio && shouldKeepNotesActive ? webAudioTargetGain : 0;
@@ -1159,7 +1193,35 @@ export default function App() {
                   </select>
                 </div>
                 <div className="pt-2 border-t border-white/5 space-y-1.5">
-                  <div className="text-[9px] text-zinc-500 uppercase">HSB Voices</div>
+                  <div className="text-[9px] text-zinc-500 uppercase">Voice Toggles</div>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Red Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.r.enabled}
+                      onChange={(e) => setVoiceEnabled('r', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Green Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.g.enabled}
+                      onChange={(e) => setVoiceEnabled('g', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                    <span>Blue Note</span>
+                    <input
+                      type="checkbox"
+                      checked={voiceMappingConfig.b.enabled}
+                      onChange={(e) => setVoiceEnabled('b', e.target.checked)}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                  <div className="pt-1 text-[9px] text-zinc-500 uppercase">HSB</div>
                   <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
                     <span>Hue Note</span>
                     <input
@@ -1237,7 +1299,21 @@ export default function App() {
           <section className={PANEL_SHELL_CLASS}>
             {renderPanelHeader('audio', 'Audio Engine', <Music className="w-3.5 h-3.5" />)}
             {openPanels.audio && (
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 space-y-3">
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Oscillator Type</div>
+                  <select
+                    value={oscillatorType}
+                    onChange={(e) => setOscillatorType(e.target.value as OscillatorType)}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                  >
+                    {OSCILLATOR_TYPE_OPTIONS.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
                   <span>Osc Volume</span>
                   <span>{oscillatorVolume}%</span>
@@ -1251,6 +1327,59 @@ export default function App() {
                   onChange={(e) => setOscillatorVolume(parseInt(e.target.value, 10))}
                   className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
                 />
+                <label className="flex items-center justify-between gap-2 text-xs text-zinc-300 pt-1 border-t border-white/5">
+                  <span>Master Filter</span>
+                  <input
+                    type="checkbox"
+                    checked={isMasterFilterEnabled}
+                    onChange={(e) => setIsMasterFilterEnabled(e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Filter Mode</div>
+                  <select
+                    value={masterFilterMode}
+                    onChange={(e) => setMasterFilterMode(e.target.value as FilterMode)}
+                    disabled={!isMasterFilterEnabled}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 disabled:text-zinc-500"
+                  >
+                    <option value="lowpass">Low-pass</option>
+                    <option value="highpass">High-pass</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                    <span>Cutoff</span>
+                    <span>{masterFilterCutoff}Hz</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="12000"
+                    step="10"
+                    value={masterFilterCutoff}
+                    onChange={(e) => setMasterFilterCutoff(parseInt(e.target.value, 10))}
+                    disabled={!isMasterFilterEnabled}
+                    className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                    <span>Resonance (Q)</span>
+                    <span>{masterFilterResonance.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="20"
+                    step="0.1"
+                    value={masterFilterResonance}
+                    onChange={(e) => setMasterFilterResonance(parseFloat(e.target.value))}
+                    disabled={!isMasterFilterEnabled}
+                    className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                  />
+                </div>
               </div>
             )}
           </section>
@@ -1363,7 +1492,7 @@ export default function App() {
                 <motion.div
                   className="absolute pointer-events-none z-10"
                   animate={{ x: cursorPos.x, y: cursorPos.y }}
-                  transition={{ type: 'spring', damping: 20, stiffness: 300, mass: 0.5 }}
+                  transition={{ type: 'spring', damping: 10, stiffness: 750, mass: 0.1 }}
                   style={{ left: -20, top: -20 }}
                 >
                   <div
@@ -1425,12 +1554,6 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
 
 
 

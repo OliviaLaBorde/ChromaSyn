@@ -14,7 +14,7 @@ It maps pixel color (RGB + HSB) to notes in a selected modal scale, then outputs
 - Modal scale selector (Ionian, Dorian, Phrygian, etc.)
 - Base note selector (shared by audio + MIDI mapping)
 - Arpeggiator mode for all enabled melodic voices
-- Individual HSB voice toggles (Hue, Saturation, Brightness)
+- Individual RGB+HSB voice toggles
 - MIDI output device picker (Web MIDI)
 - Adjustable MIDI velocity
 - Optional pedal tone with octave selector (`1x`, `2x`, `3x`)
@@ -61,7 +61,7 @@ Default dev URL:
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
 - **Enable Pedal Tone**: adds a sustained pedal voice
 - **Pedal Octave**: pedal register (`1x` highest, `3x` lowest)
-- **HSB Voices**: toggle Hue/Saturation/Brightness notes on/off
+- **Voice Toggles**: toggle Red/Green/Blue/Hue/Saturation/Brightness notes on/off
 - **Arpeggiator**: cycles all enabled melodic voices while held
 - **Sustain Hold (`Space`)**: hold active chord/pedal while exploring; click to replace
 - **MIDI Velocity**: note-on velocity (1-127)
@@ -78,3 +78,4 @@ Default dev URL:
 - Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
 - Custom chord mapping - dictate your own chord set and map the image to only those!
 - Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
+- Oscillator params - ADSR, filters, reverb, delay, compressor
