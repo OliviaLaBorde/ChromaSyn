@@ -4,6 +4,7 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => ({
+  base: '/ChromaSyn/',
   plugins: [react(), tailwindcss()],
   build: {
     outDir: 'docs',
