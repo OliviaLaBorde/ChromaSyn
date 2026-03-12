@@ -1,5 +1,5 @@
 {
-  "name": "Chromatic Sonic Explorer",
-  "description": "An interactive experiment converting image colors into musical modal harmonies using the Web Audio API and MIDI.",
+  "name": "ChromaSyn",
+  "description": "A browser-based image sonification instrument that turns spatial color variation into harmonic exploration using the Web Audio API and MIDI output woo!",
   "requestFramePermissions": []
 }
