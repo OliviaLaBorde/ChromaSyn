@@ -47,6 +47,17 @@ npm run dev
 Default dev URL:
 - `http://localhost:3000`
 
+## Build for GitHub Pages
+
+This project is configured to output production files to `docs/`.
+
+```bash
+npm run build
+```
+
+- Each build overwrites the previous `docs/` output (`emptyOutDir: true` in Vite config).
+- Commit and push updated `docs/` contents to publish changes on GitHub Pages.
+
 ## MIDI to DAW Setup
 
 1. Create/enable a virtual MIDI bus (loopMIDI/IAC).
@@ -79,3 +90,26 @@ Default dev URL:
 - Custom chord mapping - dictate your own chord set and map the image to only those!
 - Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
 - Oscillator params - ADSR, filters, reverb, delay, compressor
+
+
+## Contributing
+
+Contributions are welcome.
+
+1. Fork the repo and create a feature branch.
+2. Make focused changes with clear commit messages.
+3. Run local checks (`npm run dev` and `npm run build`).
+4. If behavior changes, update `README.md`
+5. Open a pull request with:
+   - what changed
+   - why it changed
+   - screenshots/GIFs for UI changes
+   - test notes (what you verified)
+
+### Contribution Guidelines
+
+- Keep PRs small and scoped.
+- Avoid unrelated refactors in feature PRs.
+- Preserve existing coding style and naming patterns.
+- For audio/MIDI changes, include manual test steps (browser, MIDI routing, and expected behavior).
+
