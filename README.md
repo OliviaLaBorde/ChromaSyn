@@ -1,6 +1,6 @@
 # ChromaSyn
 
-ChromaSyn is a browser-based image sonification instrument.
+ChromaSyn is a browser-based image sonification instrument. It turns spatial color variation into harmonic exploration!
 
 It maps pixel color (RGB + HSB) to notes in a selected modal scale, then outputs:
 - Internal Web Audio synthesis (up to 7 oscillators: 6 melodic voices `R/G/B/H/S/V` plus optional pedal tone)
