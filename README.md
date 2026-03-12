@@ -6,6 +6,10 @@ It maps pixel color (RGB + HSB) to notes in a selected modal scale, then outputs
 - Internal Web Audio synthesis (up to 7 oscillators: 6 melodic voices `R/G/B/H/S/V` plus optional pedal tone)
 - Web MIDI note events for routing into a DAW and soft synths
 
+## Try it and make noise wooo!!
+
+https://olivialaborde.github.io/ChromaSyn/
+
 ## Features
 
 - Load your own image or use built-in gradient presets
@@ -112,4 +116,3 @@ Contributions are welcome.
 - Avoid unrelated refactors in feature PRs.
 - Preserve existing coding style and naming patterns.
 - For audio/MIDI changes, include manual test steps (browser, MIDI routing, and expected behavior).
-

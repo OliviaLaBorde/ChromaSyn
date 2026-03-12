@@ -87,16 +87,16 @@ const BASE_NOTE_OPTIONS = Array.from({ length: 61 }, (_, i) => {
 });
 
 const PRESETS = [
-  { name: 'Warm dusk pad', gradient: 'linear-gradient(120deg, #1b1b3a 0%, #693668 35%, #a74482 65%, #f84aa7 100%)' },
-  { name: 'Teal -> gold ribbon', gradient: 'linear-gradient(90deg, #0b1320 0%, #0ea5a5 40%, #f59e0b 75%, #fff1c1 100%)' },
+  { name: 'Dus k', gradient: 'linear-gradient(120deg, #1b1b3a 0%, #693668 35%, #a74482 65%, #f84aa7 100%)' },
+  { name: 'Golden Teal Bands', gradient: 'linear-gradient(90deg, #0b1320 0%, #0ea5a5 40%, #f59e0b 75%, #fff1c1 100%)' },
   { name: 'Aurora bands', gradient: 'linear-gradient(180deg, #031926 0%, #0b7a75 33%, #00d1b2 55%, #f4f9e9 100%)' },
-  { name: 'Bruised fruit', gradient: 'linear-gradient(135deg, #0b0f1a 0%, #3a0ca3 30%, #7209b7 55%, #f72585 100%)' },
-  { name: 'Analog sunrise', gradient: 'linear-gradient(90deg, #140f2d 0%, #c92c6d 35%, #ff7a00 65%, #ffe29a 100%)' },
-  { name: 'Ocean metal', gradient: 'linear-gradient(110deg, #0a0f14 0%, #12324a 45%, #2aa198 70%, #d0f0e8 100%)' },
-  { name: 'Desert night', gradient: 'linear-gradient(145deg, #0d1b2a 0%, #415a77 35%, #e0a458 70%, #fef3c7 100%)' },
+  { name: 'Bruised', gradient: 'linear-gradient(135deg, #0b0f1a 0%, #3a0ca3 30%, #7209b7 55%, #f72585 100%)' },
+  { name: 'Sunrise', gradient: 'linear-gradient(90deg, #140f2d 0%, #c92c6d 35%, #ff7a00 65%, #ffe29a 100%)' },
+  { name: 'Ocean', gradient: 'linear-gradient(110deg, #0a0f14 0%, #12324a 45%, #2aa198 70%, #d0f0e8 100%)' },
+  { name: 'MidnightDesert', gradient: 'linear-gradient(145deg, #0d1b2a 0%, #415a77 35%, #e0a458 70%, #fef3c7 100%)' },
   { name: 'Triadic playground', gradient: 'conic-gradient(from 180deg, #ff005d, #00d4ff, #00ff85, #ffb703, #ff005d)' },
-  { name: 'Soft grayscale + tint', gradient: 'linear-gradient(90deg, #101018 0%, #2a2a3a 35%, #7c7cff 70%, #f2f2ff 100%)' },
-  { name: 'Scale walk', gradient: 'special:scale-walk' },
+  { name: 'Tinted grayscale', gradient: 'linear-gradient(90deg, #101018 0%, #2a2a3a 35%, #7c7cff 70%, #f2f2ff 100%)' },
+  { name: 'Scale Walker', gradient: 'special:scale-walk' },
 ];
 
 const PANEL_SHELL_CLASS = 'bg-white/5 rounded-xl p-4 border border-white/10';
@@ -237,6 +237,7 @@ export default function App() {
   });
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const {
     enable: enableMidi,
@@ -947,6 +948,17 @@ export default function App() {
   }, [shouldKeepNotesActive, shouldUseWebAudio, webAudioTargetGain]);
 
   useEffect(() => {
+    if (!isHelpOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsHelpOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isHelpOpen]);
+
+  useEffect(() => {
     if (image && canvasRef.current) {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
@@ -1058,6 +1070,15 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold tracking-tight text-pink-400 drop-shadow-[0_0_8px_rgba(236,72,153,0.35)]">ChromaSyn</h1>
+            <button
+              type="button"
+              onClick={() => setIsHelpOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 text-xs"
+              aria-label="Open Help"
+            >
+              <Info className="w-3.5 h-3.5" />
+              Help
+            </button>
           </div>
 
           <div className="flex items-center gap-4">
@@ -1546,6 +1567,78 @@ export default function App() {
         </div>
       </main>
 
+      <AnimatePresence>
+        {isHelpOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm p-4 sm:p-6"
+            onClick={() => setIsHelpOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 14, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              transition={{ duration: 0.16 }}
+              className="max-w-2xl mx-auto mt-10 sm:mt-16 bg-[#101014] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                <h2 className="text-sm font-semibold tracking-wide text-zinc-100">Getting Started</h2>
+                <button
+                  type="button"
+                  onClick={() => setIsHelpOpen(false)}
+                  className="px-2 py-1 text-xs rounded-md border border-white/15 text-zinc-300 hover:text-white hover:bg-white/10"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="p-5 space-y-5 text-sm text-zinc-300 max-h-[70vh] overflow-y-auto">
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">What ChromaSyn Does</h3>
+                  <p>
+                    ChromaSyn maps pixel color values to notes in the selected modal scale. It can output sound through the internal synth
+                    and/or send notes over Web MIDI to your DAW.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Quick Start</h3>
+                  <ol className="list-decimal ml-5 space-y-1">
+                    <li>Load an image or pick a preset gradient.</li>
+                    <li>Choose a mode and base note in the controls.</li>
+                    <li>Click and drag on the canvas to play notes from color regions.</li>
+                    <li>Use <span className="font-mono">Space</span> to hold/sustain a chord while exploring.</li>
+                  </ol>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">MIDI Setup</h3>
+                  <ol className="list-decimal ml-5 space-y-1">
+                    <li>Create a virtual MIDI bus (loopMIDI on Windows or IAC on macOS).</li>
+                    <li>Click <span className="font-medium">Enable MIDI</span> and select that destination.</li>
+                    <li>In your DAW, set a MIDI track input to the same bus and load a synth.</li>
+                    <li>Play from ChromaSyn and monitor notes in your DAW.</li>
+                  </ol>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Understanding The Controls</h3>
+                  <ul className="list-disc ml-5 space-y-1">
+                    <li><span className="font-medium">Voice Toggles</span>: enable/disable RGB and HSB note voices.</li>
+                    <li><span className="font-medium">Arpeggiator</span>: steps through enabled voices instead of full chord playback.</li>
+                    <li><span className="font-medium">Audio Engine</span>: set waveform, volume, and optional master filter.</li>
+                    <li><span className="font-medium">Pedal Tone</span>: adds a sustained foundational note based on RGB rules.</li>
+                  </ul>
+                </section>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Background Atmosphere */}
       <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 blur-[120px] rounded-full" />
@@ -1554,9 +1647,6 @@ export default function App() {
     </div>
   );
 }
-
-
-
 
 
 
