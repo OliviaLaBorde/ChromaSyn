@@ -40,6 +40,12 @@ type VoiceMappingById = Record<VoiceId, VoiceMappingConfig>;
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
 type ControlPanelId = 'scale' | 'arp' | 'audio' | 'midi';
 type FilterMode = 'lowpass' | 'highpass';
+type AdsrSettings = {
+  attackMs: number;
+  decayMs: number;
+  sustainLevel: number;
+  releaseMs: number;
+};
 
 const SCALES: Scale[] = [
   { name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11] },
@@ -98,9 +104,22 @@ const PRESETS = [
   { name: 'Tinted grayscale', gradient: 'linear-gradient(90deg, #101018 0%, #2a2a3a 35%, #7c7cff 70%, #f2f2ff 100%)' },
   { name: 'Scale Walker', gradient: 'special:scale-walk' },
 ];
+const PRESET_HOTKEYS = ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'] as const;
 
 const PANEL_SHELL_CLASS = 'bg-white/5 rounded-xl p-4 border border-white/10';
 const OSCILLATOR_TYPE_OPTIONS: OscillatorType[] = ['sine', 'square', 'sawtooth', 'triangle'];
+const DEFAULT_ADSR: AdsrSettings = {
+  attackMs: 20,
+  decayMs: 1500,
+  sustainLevel: 1,
+  releaseMs: 260,
+};
+const ADSR_PRESETS: Array<{ name: string; values: AdsrSettings }> = [
+  { name: 'Pluck', values: { attackMs: 5, decayMs: 120, sustainLevel: 0.2, releaseMs: 90 } },
+  { name: 'Pad', values: { attackMs: 180, decayMs: 320, sustainLevel: 0.72, releaseMs: 520 } },
+  { name: 'Organ', values: { attackMs: 8, decayMs: 40, sustainLevel: 0.92, releaseMs: 120 } },
+  { name: 'Swell', values: { attackMs: 420, decayMs: 280, sustainLevel: 0.78, releaseMs: 700 } },
+];
 
 // --- Helper Functions ---
 
@@ -203,6 +222,7 @@ const getClassicRgbDegree = (value: number) => getScaleDegree(value, DEFAULT_OCT
 
 export default function App() {
   const [image, setImage] = useState<string | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [currentScale, setCurrentScale] = useState<Scale>(SCALES[0]);
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [isSustainKeyDown, setIsSustainKeyDown] = useState(false);
@@ -223,11 +243,12 @@ export default function App() {
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
   const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
   const [oscillatorVolume, setOscillatorVolume] = useState(50);
-  const [oscillatorType, setOscillatorType] = useState<OscillatorType>('square');
+  const [oscillatorType, setOscillatorType] = useState<OscillatorType>('sawtooth');
   const [isMasterFilterEnabled, setIsMasterFilterEnabled] = useState(false);
   const [masterFilterMode, setMasterFilterMode] = useState<FilterMode>('lowpass');
   const [masterFilterCutoff, setMasterFilterCutoff] = useState(1800);
   const [masterFilterResonance, setMasterFilterResonance] = useState(1);
+  const [adsr, setAdsr] = useState<AdsrSettings>(DEFAULT_ADSR);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
   const [openPanels, setOpenPanels] = useState<Record<ControlPanelId, boolean>>({
     scale: true,
@@ -238,6 +259,7 @@ export default function App() {
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const {
     enable: enableMidi,
@@ -266,6 +288,8 @@ export default function App() {
   const activePedalNoteRef = useRef<number | null>(null);
   const heldVoiceNotesRef = useRef<Partial<Record<VoiceId, number>> | null>(null);
   const heldPedalNoteRef = useRef<number | null>(null);
+  const voiceGateStateRef = useRef<boolean[]>(Array.from({ length: TOTAL_OSCILLATORS }, () => false));
+  const toastTimeoutRef = useRef<number | null>(null);
   const pedalDegreeRef = useRef<number | null>(null);
   const pedalPersonalityMemoryRef = useRef({
     anchorCandidate: null as number | null,
@@ -329,18 +353,41 @@ export default function App() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setImage(event.target?.result as string);
+        const nextImage = event.target?.result as string;
+        setUploadedImage(nextImage);
+        setImage(nextImage);
         setIsCanvasPopulated(true);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const loadPreset = (preset: (typeof PRESETS)[0]) => {
+  const loadPreset = useCallback((preset: (typeof PRESETS)[0]) => {
     setPendingPreset(preset);
     setIsCanvasPopulated(true);
     setImage(null);
-  };
+  }, []);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimeoutRef.current !== null) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 1800);
+  }, []);
+
+  const switchToUploadedImage = useCallback(() => {
+    if (!uploadedImage) {
+      showToast('No uploaded image available.');
+      return;
+    }
+    setPendingPreset(null);
+    setImage(uploadedImage);
+    setIsCanvasPopulated(true);
+  }, [showToast, uploadedImage]);
 
   const drawPreset = useCallback((preset: (typeof PRESETS)[0]) => {
     const canvas = canvasRef.current;
@@ -421,6 +468,39 @@ export default function App() {
       setPendingPreset(null);
     }
   }, [isCanvasPopulated, pendingPreset, drawPreset]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        const isFormField = tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button';
+        const isEditable = target.isContentEditable;
+        if (isFormField || isEditable) return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === 'a') {
+        event.preventDefault();
+        switchToUploadedImage();
+        return;
+      }
+
+      const presetIndex = PRESET_HOTKEYS.indexOf(key as (typeof PRESET_HOTKEYS)[number]);
+      if (presetIndex < 0) return;
+
+      const preset = PRESETS[presetIndex];
+      if (!preset) return;
+
+      event.preventDefault();
+      loadPreset(preset);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [loadPreset, switchToUploadedImage]);
 
   const resetPedalPersonalityState = useCallback(() => {
     pedalDegreeRef.current = null;
@@ -570,6 +650,60 @@ export default function App() {
     },
     [baseMidiNote, currentScale.intervals, pedalOctaveMultiplier, resolvePedalDegree],
   );
+
+  const gateOnVoice = useCallback(
+    (index: number, targetGain: number, now: number, retrigger = false) => {
+      const gainNode = gainNodesRef.current[index];
+      if (!gainNode) return;
+
+      const attackSec = Math.max(0.001, adsr.attackMs / 1000);
+      const decaySec = Math.max(0.001, adsr.decayMs / 1000);
+      const sustainGain = clamp(adsr.sustainLevel, 0, 1) * targetGain;
+      const gainParam = gainNode.gain;
+      const currentValue = gainParam.value;
+
+      gainParam.cancelScheduledValues(now);
+      gainParam.setValueAtTime(retrigger ? 0 : currentValue, now);
+      gainParam.linearRampToValueAtTime(targetGain, now + attackSec);
+      gainParam.linearRampToValueAtTime(sustainGain, now + attackSec + decaySec);
+
+      voiceGateStateRef.current[index] = true;
+    },
+    [adsr.attackMs, adsr.decayMs, adsr.sustainLevel],
+  );
+
+  const gateOffVoice = useCallback(
+    (index: number, now: number) => {
+      const gainNode = gainNodesRef.current[index];
+      if (!gainNode) return;
+
+      const releaseSec = Math.max(0.001, adsr.releaseMs / 1000);
+      const gainParam = gainNode.gain;
+      const currentValue = gainParam.value;
+
+      gainParam.cancelScheduledValues(now);
+      gainParam.setValueAtTime(currentValue, now);
+      gainParam.linearRampToValueAtTime(0, now + releaseSec);
+
+      voiceGateStateRef.current[index] = false;
+    },
+    [adsr.releaseMs],
+  );
+
+  const releaseAllAudioVoices = useCallback(
+    (now?: number) => {
+      const audioCtx = audioCtxRef.current;
+      if (!audioCtx) return;
+      const releaseAt = now ?? audioCtx.currentTime;
+      for (let i = 0; i < TOTAL_OSCILLATORS; i++) {
+        if (voiceGateStateRef.current[i]) {
+          gateOffVoice(i, releaseAt);
+        }
+      }
+    },
+    [gateOffVoice],
+  );
+
   const updateFrequencies = useCallback(
     (r: number, g: number, b: number, hsb: HsbColor) => {
       if (!audioCtxRef.current || !isAudioStarted || !shouldUseWebAudio) return;
@@ -580,37 +714,35 @@ export default function App() {
 
       MELODIC_VOICES.forEach((voice, index) => {
         const osc = oscillatorsRef.current[index];
-        const gain = gainNodesRef.current[index];
         const isEnabled = voiceMappingConfig[voice.id].enabled;
         if (!osc) return;
 
         osc.frequency.setTargetAtTime(midiNoteToFrequency(midiNotes[voice.id]), now, 0.05);
-        if (!gain) return;
 
-        if (!isEnabled) {
-          gain.gain.setTargetAtTime(0, now, 0.05);
-          return;
-        }
+        const shouldBeActive = isEnabled && (!isArpEnabled ? shouldKeepNotesActive : activeArpVoiceId === voice.id);
+        const isActive = voiceGateStateRef.current[index];
 
-        if (!isArpEnabled) {
-          gain.gain.setTargetAtTime(voice.gain, now, 0.05);
-          return;
-        }
-
-        if (activeArpVoiceId === null) {
-          gain.gain.setTargetAtTime(0, now, 0.05);
+        if (shouldBeActive) {
+          if (!isActive) {
+            gateOnVoice(index, voice.gain, now);
+          }
+        } else if (isActive) {
+          gateOffVoice(index, now);
         }
       });
 
       const pedalOsc = oscillatorsRef.current[PEDAL_OSC_INDEX];
-      const pedalGain = gainNodesRef.current[PEDAL_OSC_INDEX];
-      if (pedalOsc && pedalGain) {
+      if (pedalOsc) {
         const pedalMidiNote = getPedalMidiNote(r, g, b, isMouseDown);
         if (pedalMidiNote === null) {
-          pedalGain.gain.setTargetAtTime(0, now, 0.05);
+          if (voiceGateStateRef.current[PEDAL_OSC_INDEX]) {
+            gateOffVoice(PEDAL_OSC_INDEX, now);
+          }
         } else {
           pedalOsc.frequency.setTargetAtTime(midiNoteToFrequency(pedalMidiNote), now, 0.05);
-          pedalGain.gain.setTargetAtTime(PEDAL_OSC_GAIN, now, 0.05);
+          if (!voiceGateStateRef.current[PEDAL_OSC_INDEX] && shouldKeepNotesActive) {
+            gateOnVoice(PEDAL_OSC_INDEX, PEDAL_OSC_GAIN, now);
+          }
         }
       }
     },
@@ -619,9 +751,12 @@ export default function App() {
       enabledVoiceIds,
       getPedalMidiNote,
       getVoiceMidiNotes,
+      gateOffVoice,
+      gateOnVoice,
       isArpEnabled,
       isAudioStarted,
       isMouseDown,
+      shouldKeepNotesActive,
       shouldUseWebAudio,
       voiceMappingConfig,
     ],
@@ -719,16 +854,20 @@ export default function App() {
 
   useEffect(() => {
     if (!isArpEnabled || !isMouseDown || !isAudioStarted || shouldFreezeArp) {
-      // Reset gains if arp is disabled but mouse is down (back to chord mode)
+      // Return to chord gates when arp is disabled and note gate is active.
       if (!isArpEnabled && isMouseDown && audioCtxRef.current) {
         const now = audioCtxRef.current.currentTime;
         MELODIC_VOICES.forEach((voice, index) => {
-          const gainNode = gainNodesRef.current[index];
-          gainNode?.gain.setTargetAtTime(voiceMappingConfig[voice.id].enabled ? voice.gain : 0, now, 0.05);
+          const shouldBeActive = voiceMappingConfig[voice.id].enabled;
+          const isActive = voiceGateStateRef.current[index];
+          if (shouldBeActive && !isActive) {
+            gateOnVoice(index, voice.gain, now);
+          } else if (!shouldBeActive && isActive) {
+            gateOffVoice(index, now);
+          }
         });
-        const pedalGain = gainNodesRef.current[PEDAL_OSC_INDEX];
-        if (pedalGain) {
-          pedalGain.gain.setTargetAtTime(isPedalToneEnabled ? PEDAL_OSC_GAIN : 0, now, 0.05);
+        if (!isPedalToneEnabled && voiceGateStateRef.current[PEDAL_OSC_INDEX]) {
+          gateOffVoice(PEDAL_OSC_INDEX, now);
         }
       }
       return;
@@ -741,7 +880,7 @@ export default function App() {
     }, arpSpeed);
 
     return () => clearInterval(interval);
-  }, [arpSpeed, enabledVoiceIds.length, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
+  }, [arpSpeed, enabledVoiceIds.length, gateOffVoice, gateOnVoice, isArpEnabled, isAudioStarted, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
   // Update gains based on arpIndex
   useEffect(() => {
@@ -750,18 +889,20 @@ export default function App() {
     const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
     const now = audioCtxRef.current.currentTime;
     MELODIC_VOICES.forEach((voice, index) => {
-      const gainNode = gainNodesRef.current[index];
-      if (!gainNode) return;
-      const targetGain =
-        voiceMappingConfig[voice.id].enabled && voice.id === activeArpVoiceId ? ARP_ACTIVE_GAIN : 0;
-      gainNode.gain.setTargetAtTime(targetGain, now, 0.02);
+      const shouldBeActive =
+        voiceMappingConfig[voice.id].enabled && voice.id === activeArpVoiceId;
+      const isActive = voiceGateStateRef.current[index];
+      if (shouldBeActive) {
+        gateOnVoice(index, ARP_ACTIVE_GAIN, now, true);
+      } else if (isActive) {
+        gateOffVoice(index, now);
+      }
     });
 
-    const pedalGain = gainNodesRef.current[PEDAL_OSC_INDEX];
-    if (pedalGain) {
-      pedalGain.gain.setTargetAtTime(isPedalToneEnabled ? PEDAL_OSC_GAIN : 0, now, 0.02);
+    if (!isPedalToneEnabled && voiceGateStateRef.current[PEDAL_OSC_INDEX]) {
+      gateOffVoice(PEDAL_OSC_INDEX, now);
     }
-  }, [arpIndex, enabledVoiceIds, isArpEnabled, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
+  }, [arpIndex, enabledVoiceIds, gateOffVoice, gateOnVoice, isArpEnabled, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
   // Update MIDI note allocation when arp/chord mode changes.
   useEffect(() => {
@@ -837,23 +978,18 @@ export default function App() {
       setIsSustainLatched(true);
       captureHeldNotes();
     }
-
-    if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current) {
-      masterGainRef.current.gain.setTargetAtTime(webAudioTargetGain, audioCtxRef.current.currentTime, 0.1);
-    }
   };
 
   const handleMouseUp = useCallback(() => {
     setIsMouseDown(false);
     if (!isSustainLatched) {
       clearActiveMidiNotes();
+      if (audioCtxRef.current) {
+        releaseAllAudioVoices(audioCtxRef.current.currentTime);
+      }
     }
     resetPedalPersonalityState();
-
-    if (shouldUseWebAudio && masterGainRef.current && audioCtxRef.current && !isSustainLatched) {
-      masterGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.1);
-    }
-  }, [clearActiveMidiNotes, isSustainLatched, resetPedalPersonalityState, shouldUseWebAudio]);
+  }, [clearActiveMidiNotes, isSustainLatched, releaseAllAudioVoices, resetPedalPersonalityState]);
 
 
   useEffect(() => {
@@ -863,23 +999,32 @@ export default function App() {
   useEffect(() => {
     if (previousMidiOutputRef.current && previousMidiOutputRef.current !== selectedOutputId) {
       clearActiveMidiNotes();
+      if (audioCtxRef.current) {
+        releaseAllAudioVoices(audioCtxRef.current.currentTime);
+      }
       panic();
     }
     previousMidiOutputRef.current = selectedOutputId;
-  }, [clearActiveMidiNotes, panic, selectedOutputId]);
+  }, [clearActiveMidiNotes, panic, releaseAllAudioVoices, selectedOutputId]);
 
   useEffect(() => {
     if (midiStatus === 'ready' || midiStatus === 'no-outputs' || midiStatus === 'disabled') return;
     clearActiveMidiNotes();
+    if (audioCtxRef.current) {
+      releaseAllAudioVoices(audioCtxRef.current.currentTime);
+    }
     panic();
-  }, [clearActiveMidiNotes, midiStatus, panic]);
+  }, [clearActiveMidiNotes, midiStatus, panic, releaseAllAudioVoices]);
 
   useEffect(() => {
     return () => {
       clearActiveMidiNotes();
+      if (audioCtxRef.current) {
+        releaseAllAudioVoices(audioCtxRef.current.currentTime);
+      }
       panic();
     };
-  }, [clearActiveMidiNotes, panic]);
+  }, [clearActiveMidiNotes, panic, releaseAllAudioVoices]);
 
   useEffect(() => {
     const hasActiveNotes = () => {
@@ -909,6 +1054,9 @@ export default function App() {
 
       if (!isMouseDown) {
         clearActiveMidiNotes();
+        if (audioCtxRef.current) {
+          releaseAllAudioVoices(audioCtxRef.current.currentTime);
+        }
       }
     };
 
@@ -918,7 +1066,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [captureHeldNotes, clearActiveMidiNotes, isMouseDown, isSustainKeyDown]);
+  }, [captureHeldNotes, clearActiveMidiNotes, isMouseDown, isSustainKeyDown, releaseAllAudioVoices]);
 
   useEffect(() => {
     if (!isAudioStarted || !audioCtxRef.current) return;
@@ -943,9 +1091,15 @@ export default function App() {
   useEffect(() => {
     if (!masterGainRef.current || !audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
-    const targetGain = shouldUseWebAudio && shouldKeepNotesActive ? webAudioTargetGain : 0;
+    const targetGain = shouldUseWebAudio && isAudioStarted ? webAudioTargetGain : 0;
     masterGainRef.current.gain.setTargetAtTime(targetGain, now, 0.05);
-  }, [shouldKeepNotesActive, shouldUseWebAudio, webAudioTargetGain]);
+  }, [isAudioStarted, shouldUseWebAudio, webAudioTargetGain]);
+
+  useEffect(() => {
+    if (shouldUseWebAudio) return;
+    if (!audioCtxRef.current) return;
+    releaseAllAudioVoices(audioCtxRef.current.currentTime);
+  }, [releaseAllAudioVoices, shouldUseWebAudio]);
 
   useEffect(() => {
     if (!isHelpOpen) return;
@@ -957,6 +1111,14 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isHelpOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current !== null) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (image && canvasRef.current) {
@@ -1348,6 +1510,81 @@ export default function App() {
                   onChange={(e) => setOscillatorVolume(parseInt(e.target.value, 10))}
                   className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
                 />
+                <div className="pt-1 border-t border-white/5 space-y-2">
+                  <div className="text-[9px] text-zinc-500 uppercase">ADSR Envelope</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ADSR_PRESETS.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => setAdsr(preset.values)}
+                        className="px-2 py-1 text-[10px] rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10"
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Attack</span>
+                      <span>{adsr.attackMs}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="1000"
+                      step="1"
+                      value={adsr.attackMs}
+                      onChange={(e) => setAdsr((prev) => ({ ...prev, attackMs: parseInt(e.target.value, 10) }))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Decay</span>
+                      <span>{adsr.decayMs}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="1500"
+                      step="1"
+                      value={adsr.decayMs}
+                      onChange={(e) => setAdsr((prev) => ({ ...prev, decayMs: parseInt(e.target.value, 10) }))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Sustain</span>
+                      <span>{adsr.sustainLevel.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={adsr.sustainLevel}
+                      onChange={(e) => setAdsr((prev) => ({ ...prev, sustainLevel: parseFloat(e.target.value) }))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Release</span>
+                      <span>{adsr.releaseMs}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="2000"
+                      step="1"
+                      value={adsr.releaseMs}
+                      onChange={(e) => setAdsr((prev) => ({ ...prev, releaseMs: parseInt(e.target.value, 10) }))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                </div>
                 <label className="flex items-center justify-between gap-2 text-xs text-zinc-300 pt-1 border-t border-white/5">
                   <span>Master Filter</span>
                   <input
@@ -1475,8 +1712,13 @@ export default function App() {
               <h2 className="text-[10px] font-bold uppercase tracking-widest">Preset Gradients</h2>
             </div>
             <div className="flex gap-3 pb-2">
-              {PRESETS.map((preset) => (
-                <button key={preset.name} onClick={() => loadPreset(preset)} className="flex-shrink-0 group relative w-24 space-y-2 text-center">
+              {PRESETS.map((preset, index) => (
+                <button
+                  key={preset.name}
+                  onClick={() => loadPreset(preset)}
+                  title={PRESET_HOTKEYS[index] ? `${preset.name} (${PRESET_HOTKEYS[index].toUpperCase()})` : preset.name}
+                  className="flex-shrink-0 group relative w-24 space-y-2 text-center"
+                >
                   <div
                     className="w-24 h-16 rounded-lg border border-white/10 shadow-lg transition-transform group-hover:scale-105 group-active:scale-95"
                     style={{ background: preset.gradient }}
@@ -1599,8 +1841,9 @@ export default function App() {
                 <section className="space-y-2">
                   <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">What ChromaSyn Does</h3>
                   <p>
-                    ChromaSyn maps pixel color values to notes in the selected modal scale. It can output sound through the internal synth
-                    and/or send notes over Web MIDI to your DAW.
+                    ChromaSyn is a browser-based image sonification instrument that turns spatial color variation into harmonic exploration while locking the playable notes to a modal scale! 
+                    It can output sound through the internal oscillators
+                    and/or send notes over Web MIDI to your DAW or a hardware synth.
                   </p>
                 </section>
 
@@ -1608,10 +1851,20 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Quick Start</h3>
                   <ol className="list-decimal ml-5 space-y-1">
                     <li>Load an image or pick a preset gradient.</li>
-                    <li>Choose a mode and base note in the controls.</li>
+                    <li>Choose a scale mode and base note in the controls.</li>
                     <li>Click and drag on the canvas to play notes from color regions.</li>
                     <li>Use <span className="font-mono">Space</span> to hold/sustain a chord while exploring.</li>
+                    <li>Use preset hotkeys <span className="font-mono">z x c v b n m , . /</span> to load presets 1-10.</li>
+                    <li>Press <span className="font-mono">A</span> to switch back to your uploaded image at any time.</li>
                   </ol>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Performance Tip</h3>
+                  <p>
+                    While holding <span className="font-mono">Space</span>, you can switch preset gradients and swap back to uploaded images
+                    without interrupting sustained notes. You can even load a new image while sustaining for fluid transitions.
+                  </p>
                 </section>
 
                 <section className="space-y-2">
@@ -1639,6 +1892,19 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="fixed bottom-5 right-5 z-[70] px-3 py-2 rounded-lg bg-black/85 border border-white/15 text-xs text-zinc-100 shadow-lg pointer-events-none"
+          >
+            {toastMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Background Atmosphere */}
       <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 blur-[120px] rounded-full" />
@@ -1647,13 +1913,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-

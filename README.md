@@ -23,6 +23,9 @@ https://olivialaborde.github.io/ChromaSyn/
 - Adjustable MIDI velocity
 - Optional pedal tone with octave selector (`1x`, `2x`, `3x`)
 - Option to mute internal Web Audio while MIDI is active
+- Oscillator type selector (`sine`, `square`, `sawtooth`, `triangle`)
+- ADSR envelope controls for internal oscillators (A/D/S/R + presets)
+- Optional master filter (`low-pass`/`high-pass`) with cutoff + resonance
 
 ## How It Works
 
@@ -79,6 +82,10 @@ npm run build
 - **Voice Toggles**: toggle Red/Green/Blue/Hue/Saturation/Brightness notes on/off
 - **Arpeggiator**: cycles all enabled melodic voices while held
 - **Sustain Hold (`Space`)**: hold active chord/pedal while exploring; click to replace
+- **Preset Hotkeys**: `z x c v b n m , . /` load gradient presets 1-10
+- **Oscillator Type**: sets melodic waveform
+- **ADSR Envelope**: shapes internal oscillator amplitude
+- **Master Filter**: enables low-pass/high-pass shaping with cutoff and resonance
 - **MIDI Velocity**: note-on velocity (1-127)
 - **Mute web audio when MIDI ready**: prevents doubling when using DAW synths
 
@@ -93,7 +100,7 @@ npm run build
 - Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
 - Custom chord mapping - dictate your own chord set and map the image to only those!
 - Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
-- Oscillator params - ADSR, filters, reverb, delay, compressor
+- Oscillator FX expansion - reverb, delay, compressor
 
 
 ## Contributing
