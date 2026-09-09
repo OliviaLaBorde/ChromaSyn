@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf docs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node scripts/runMusicEngineTests.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.546.0",

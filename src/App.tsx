@@ -2,41 +2,47 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Upload, Music, Settings2, Info, ChevronDown, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
+import {
+  DEFAULT_HARMONY_ENGINE_SETTINGS,
+  DEFAULT_OCTAVE_SPAN,
+  HARMONY_MODELS,
+  SCALES,
+  clamp,
+  getClassicRgbDegree,
+  getHarmonyResultForColor,
+  getMidiLegatoNoteOffPlan,
+  getMidiNoteTransition,
+  getScaleDegreeForMidiNote,
+  midiNoteToFrequency,
+  midiNoteToName,
+  parseChordProgression,
+  rgbToHsb,
+  type HarmonyEngineSettings,
+  type HarmonyModelId,
+  type HarmonyResult,
+  type HsbColor,
+  type Scale,
+  type VoiceDescriptor,
+  type VoiceId,
+  type VoiceMappingById,
+  type VoiceNoteById,
+  type VoicingContext,
+} from './musicEngine';
 
 // --- Constants & Types ---
-
-type Scale = {
-  name: string;
-  intervals: number[]; // semitones from root
-};
-
-type VoiceId = 'r' | 'g' | 'b' | 'h' | 's' | 'v';
-type VoiceSource = 'rgb' | 'hsb';
-type HsbColor = { h: number; s: number; v: number };
-
-type VoiceDescriptor = {
-  id: VoiceId;
-  label: string;
-  source: VoiceSource;
-  defaultEnabled: boolean;
-  detuneCents: number;
-  gain: number;
-};
 
 type ActiveVoiceNote = {
   voice: VoiceId;
   note: number | null;
 };
 
-type VoiceMappingConfig = {
-  enabled: boolean;
-  inputRange: [number, number];
-  octaveSpan: number;
-  degreeBias: number;
+type PendingMidiNoteOff = {
+  id: number;
+  note: number;
+  timeoutId: number;
 };
 
-type VoiceMappingById = Record<VoiceId, VoiceMappingConfig>;
-
+type HarmonySourceMode = 'image' | 'manual-progression';
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
 type ControlPanelId = 'scale' | 'arp' | 'audio' | 'midi';
 type FilterMode = 'lowpass' | 'highpass';
@@ -47,22 +53,13 @@ type AdsrSettings = {
   releaseMs: number;
 };
 
-const SCALES: Scale[] = [
-  { name: 'Ionian (Major)', intervals: [0, 2, 4, 5, 7, 9, 11] },
-  { name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
-  { name: 'Phrygian', intervals: [0, 1, 3, 5, 7, 8, 10] },
-  { name: 'Lydian', intervals: [0, 2, 4, 6, 7, 9, 11] },
-  { name: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10] },
-  { name: 'Aeolian (Minor)', intervals: [0, 2, 3, 5, 7, 8, 10] },
-  { name: 'Locrian', intervals: [0, 1, 3, 5, 6, 8, 10] },
-];
-
 const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
+const DEFAULT_MIDI_LEGATO_OVERLAP_MS = 35;
+const DEFAULT_MANUAL_PROGRESSION = 'Dm9\nG13\nCmaj9\nA7alt';
 const MELODIC_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
 const ARP_ACTIVE_GAIN = 0.4;
-const DEFAULT_OCTAVE_SPAN = 3;
 const MELODIC_VOICES: VoiceDescriptor[] = [
   { id: 'r', label: 'Red', source: 'rgb', defaultEnabled: true, detuneCents: -2.5, gain: MELODIC_OSC_GAIN },
   { id: 'g', label: 'Green', source: 'rgb', defaultEnabled: true, detuneCents: 0, gain: MELODIC_OSC_GAIN },
@@ -123,30 +120,6 @@ const ADSR_PRESETS: Array<{ name: string; values: AdsrSettings }> = [
 
 // --- Helper Functions ---
 
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-
-const rgbToHsb = (r: number, g: number, b: number): HsbColor => {
-  const rn = clamp(r / 255, 0, 1);
-  const gn = clamp(g / 255, 0, 1);
-  const bn = clamp(b / 255, 0, 1);
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
-  const delta = max - min;
-
-  let hue = 0;
-  if (delta !== 0) {
-    if (max === rn) hue = ((gn - bn) / delta) % 6;
-    else if (max === gn) hue = (bn - rn) / delta + 2;
-    else hue = (rn - gn) / delta + 4;
-    hue *= 60;
-    if (hue < 0) hue += 360;
-  }
-
-  const saturation = max === 0 ? 0 : delta / max;
-  const brightness = max;
-  return { h: hue, s: saturation, v: brightness };
-};
-
 const getDefaultVoiceMappingConfig = (): VoiceMappingById =>
   MELODIC_VOICES.reduce((acc, voice) => {
     acc[voice.id] = {
@@ -157,45 +130,6 @@ const getDefaultVoiceMappingConfig = (): VoiceMappingById =>
     };
     return acc;
   }, {} as VoiceMappingById);
-
-const normalizeVoiceInput = (rawValue: number, range: [number, number]) => {
-  const min = Math.min(range[0], range[1]);
-  const max = Math.max(range[0], range[1]);
-  if (max === min) return 0;
-  return clamp(((rawValue - min) / (max - min)) * 255, 0, 255);
-};
-
-const getSemitones = (scale: Scale, normalizedValue: number, octaveSpan: number, degreeBias: number) => {
-  // Map 0-255 to scale degrees over a configurable octave span.
-  const steps = Math.max(7, Math.floor(octaveSpan) * 7);
-  const degree = Math.floor((clamp(normalizedValue, 0, 255) / 255) * steps) + Math.trunc(degreeBias);
-  const octave = Math.floor(degree / 7);
-  const noteIndex = ((degree % 7) + 7) % 7;
-  return octave * 12 + scale.intervals[noteIndex];
-};
-
-const midiNoteToFrequency = (midiNote: number) => {
-  return 440 * Math.pow(2, (midiNote - 69) / 12);
-};
-
-const midiNoteToName = (midiNote: number) => {
-  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const clamped = Math.max(0, Math.min(127, midiNote));
-  const name = names[clamped % 12];
-  const octave = Math.floor(clamped / 12) - 1;
-  return `${name}${octave}`;
-};
-
-const getMidiNote = (scale: Scale, normalizedValue: number, baseMidiNote: number, octaveSpan: number, degreeBias: number) => {
-  const semitones = getSemitones(scale, normalizedValue, octaveSpan, degreeBias);
-  return baseMidiNote + semitones;
-};
-
-const getScaleDegree = (normalizedValue: number, octaveSpan: number, degreeBias: number) => {
-  const steps = Math.max(7, Math.floor(octaveSpan) * 7);
-  const degree = Math.floor((clamp(normalizedValue, 0, 255) / 255) * steps) + Math.trunc(degreeBias);
-  return ((degree % 7) + 7) % 7 + 1;
-};
 
 const getDegreeFromSum = (sum: number) => {
   const clamped = Math.max(0, Math.min(765, sum));
@@ -216,7 +150,13 @@ const stepDegreeToward = (from: number, to: number) => {
   return from < to ? from + 1 : from - 1;
 };
 
-const getClassicRgbDegree = (value: number) => getScaleDegree(value, DEFAULT_OCTAVE_SPAN, 0);
+const isKeyboardInputTarget = (target: EventTarget | null) => {
+  const element = target as HTMLElement | null;
+  if (!element) return false;
+
+  const tag = element.tagName.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || element.isContentEditable;
+};
 
 // --- Components ---
 
@@ -239,6 +179,8 @@ export default function App() {
   const [disableWebAudioWithMidi, setDisableWebAudioWithMidi] = useState(true);
   const [baseMidiNote, setBaseMidiNote] = useState(DEFAULT_BASE_MIDI_NOTE);
   const [midiVelocity, setMidiVelocity] = useState(DEFAULT_MIDI_VELOCITY);
+  const [isMidiLegatoEnabled, setIsMidiLegatoEnabled] = useState(false);
+  const [midiLegatoOverlapMs, setMidiLegatoOverlapMs] = useState(DEFAULT_MIDI_LEGATO_OVERLAP_MS);
   const [isPedalToneEnabled, setIsPedalToneEnabled] = useState(false);
   const [pedalOctaveMultiplier, setPedalOctaveMultiplier] = useState<1 | 2 | 3>(1);
   const [pedalPersonality, setPedalPersonality] = useState<PedalPersonality>('classic');
@@ -249,6 +191,11 @@ export default function App() {
   const [masterFilterCutoff, setMasterFilterCutoff] = useState(1800);
   const [masterFilterResonance, setMasterFilterResonance] = useState(1);
   const [adsr, setAdsr] = useState<AdsrSettings>(DEFAULT_ADSR);
+  const [harmonyModelId, setHarmonyModelId] = useState<HarmonyModelId>(DEFAULT_HARMONY_ENGINE_SETTINGS.modelId);
+  const [harmonyGravity, setHarmonyGravity] = useState(DEFAULT_HARMONY_ENGINE_SETTINGS.gravity);
+  const [harmonySourceMode, setHarmonySourceMode] = useState<HarmonySourceMode>('image');
+  const [manualProgressionText, setManualProgressionText] = useState(DEFAULT_MANUAL_PROGRESSION);
+  const [manualProgressionIndex, setManualProgressionIndex] = useState(0);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
   const [openPanels, setOpenPanels] = useState<Record<ControlPanelId, boolean>>({
     scale: true,
@@ -282,10 +229,12 @@ export default function App() {
   const activeMidiNotesRef = useRef<ActiveVoiceNote[]>(
     MELODIC_VOICES.map((voice) => ({ voice: voice.id, note: null })),
   );
-  const latestMidiNotesRef = useRef<Record<VoiceId, number> | null>(null);
+  const latestHarmonyResultRef = useRef<HarmonyResult | null>(null);
   const latestRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
   const previousMidiOutputRef = useRef<string>('');
   const activePedalNoteRef = useRef<number | null>(null);
+  const pendingMidiNoteOffsRef = useRef<PendingMidiNoteOff[]>([]);
+  const pendingMidiNoteOffIdRef = useRef(0);
   const heldVoiceNotesRef = useRef<Partial<Record<VoiceId, number>> | null>(null);
   const heldPedalNoteRef = useRef<number | null>(null);
   const voiceGateStateRef = useRef<boolean[]>(Array.from({ length: TOTAL_OSCILLATORS }, () => false));
@@ -302,10 +251,66 @@ export default function App() {
   const webAudioTargetGain = oscillatorVolume / 100;
   const shouldKeepNotesActive = isMouseDown || isSustainLatched;
   const shouldFreezeArp = isSustainLatched;
+  const selectedHarmonyModel = useMemo(
+    () => HARMONY_MODELS.find((model) => model.id === harmonyModelId) ?? HARMONY_MODELS[0],
+    [harmonyModelId],
+  );
+  const harmonySettings = useMemo<HarmonyEngineSettings>(
+    () => ({
+      ...DEFAULT_HARMONY_ENGINE_SETTINGS,
+      modelId: harmonyModelId,
+      gravity: harmonyGravity,
+      density: selectedHarmonyModel.defaultDensity,
+    }),
+    [harmonyGravity, harmonyModelId, selectedHarmonyModel.defaultDensity],
+  );
+  const manualProgression = useMemo(
+    () => parseChordProgression(manualProgressionText, currentScale, baseMidiNote),
+    [baseMidiNote, currentScale, manualProgressionText],
+  );
+  const activeManualChord =
+    harmonySourceMode === 'manual-progression' && manualProgression.chords.length > 0
+      ? manualProgression.chords[manualProgressionIndex % manualProgression.chords.length]
+      : undefined;
   const enabledVoiceIds = useMemo(
     () => MELODIC_VOICES.filter((voice) => voiceMappingConfig[voice.id].enabled).map((voice) => voice.id),
     [voiceMappingConfig],
   );
+
+  const advanceManualProgression = useCallback(() => {
+    if (manualProgression.chords.length === 0) return;
+    setManualProgressionIndex((prev) => (prev + 1) % manualProgression.chords.length);
+  }, [manualProgression.chords.length]);
+
+  const resetManualProgression = useCallback(() => {
+    setManualProgressionIndex(0);
+  }, []);
+
+  useEffect(() => {
+    setManualProgressionIndex((prev) => {
+      if (manualProgression.chords.length === 0) return 0;
+      return prev % manualProgression.chords.length;
+    });
+  }, [manualProgression.chords.length]);
+
+  useEffect(() => {
+    if (harmonySourceMode !== 'manual-progression') return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || isKeyboardInputTarget(event.target)) return;
+
+      if (event.key === ']') {
+        event.preventDefault();
+        advanceManualProgression();
+      } else if (event.key === '[') {
+        event.preventDefault();
+        resetManualProgression();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [advanceManualProgression, harmonySourceMode, resetManualProgression]);
 
   // Initialize Audio
   const initAudio = useCallback(() => {
@@ -472,14 +477,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
-
-      const target = event.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName.toLowerCase();
-        const isFormField = tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button';
-        const isEditable = target.isContentEditable;
-        if (isFormField || isEditable) return;
-      }
+      if (isKeyboardInputTarget(event.target)) return;
 
       const key = event.key.toLowerCase();
       if (key === 'a') {
@@ -599,43 +597,23 @@ export default function App() {
     [isPedalToneEnabled, pedalPersonality],
   );
 
-  const getRawVoiceValue = useCallback((voiceId: VoiceId, r: number, g: number, b: number, hsb: HsbColor) => {
-    switch (voiceId) {
-      case 'r':
-        return r;
-      case 'g':
-        return g;
-      case 'b':
-        return b;
-      case 'h':
-        return (clamp(hsb.h, 0, 360) / 360) * 255;
-      case 's':
-        return clamp(hsb.s, 0, 1) * 255;
-      case 'v':
-        return clamp(hsb.v, 0, 1) * 255;
-      default:
-        return 0;
-    }
-  }, []);
-
-  const getVoiceMidiNotes = useCallback(
-    (r: number, g: number, b: number, hsb: HsbColor) => {
-      return MELODIC_VOICES.reduce((notes, voice) => {
-        const config = voiceMappingConfig[voice.id];
-        const rawValue = getRawVoiceValue(voice.id, r, g, b, hsb);
-        const normalizedValue = normalizeVoiceInput(rawValue, config.inputRange);
-        const note = getMidiNote(
-          currentScale,
-          normalizedValue,
-          baseMidiNote,
-          config.octaveSpan,
-          config.degreeBias,
-        );
-        notes[voice.id] = clamp(note, 0, 127);
-        return notes;
-      }, {} as Record<VoiceId, number>);
+  const getCurrentHarmonyResult = useCallback(
+    (r: number, g: number, b: number, hsb: HsbColor, voicingContext?: VoicingContext) => {
+      return getHarmonyResultForColor(
+        MELODIC_VOICES,
+        currentScale,
+        voiceMappingConfig,
+        baseMidiNote,
+        harmonySettings,
+        r,
+        g,
+        b,
+        hsb,
+        activeManualChord ? { manualChord: activeManualChord } : undefined,
+        voicingContext,
+      );
     },
-    [baseMidiNote, currentScale, getRawVoiceValue, voiceMappingConfig],
+    [activeManualChord, baseMidiNote, currentScale, harmonySettings, voiceMappingConfig],
   );
 
   const getPedalMidiNote = useCallback(
@@ -704,22 +682,58 @@ export default function App() {
     [gateOffVoice],
   );
 
+  const cancelPendingMidiNoteOff = useCallback((note: number) => {
+    const pendingIndex = pendingMidiNoteOffsRef.current.findIndex((pendingNoteOff) => pendingNoteOff.note === note);
+    if (pendingIndex === -1) return false;
+
+    const [pendingNoteOff] = pendingMidiNoteOffsRef.current.splice(pendingIndex, 1);
+    window.clearTimeout(pendingNoteOff.timeoutId);
+    return true;
+  }, []);
+
+  const scheduleMidiNoteOff = useCallback(
+    (note: number) => {
+      const id = pendingMidiNoteOffIdRef.current + 1;
+      pendingMidiNoteOffIdRef.current = id;
+      const timeoutId = window.setTimeout(() => {
+        const pendingIndex = pendingMidiNoteOffsRef.current.findIndex((pendingNoteOff) => pendingNoteOff.id === id);
+        if (pendingIndex === -1) return;
+
+        pendingMidiNoteOffsRef.current.splice(pendingIndex, 1);
+        sendNoteOff(note);
+      }, midiLegatoOverlapMs);
+
+      pendingMidiNoteOffsRef.current.push({ id, note, timeoutId });
+    },
+    [midiLegatoOverlapMs, sendNoteOff],
+  );
+
+  const flushPendingMidiNoteOffs = useCallback(() => {
+    const pendingNoteOffs = pendingMidiNoteOffsRef.current.splice(0);
+    pendingNoteOffs.forEach((pendingNoteOff) => {
+      window.clearTimeout(pendingNoteOff.timeoutId);
+      sendNoteOff(pendingNoteOff.note);
+    });
+  }, [sendNoteOff]);
+
   const updateFrequencies = useCallback(
-    (r: number, g: number, b: number, hsb: HsbColor) => {
+    (harmonyResult: HarmonyResult, r: number, g: number, b: number) => {
       if (!audioCtxRef.current || !isAudioStarted || !shouldUseWebAudio) return;
 
-      const midiNotes = getVoiceMidiNotes(r, g, b, hsb);
       const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
       const now = audioCtxRef.current.currentTime;
 
       MELODIC_VOICES.forEach((voice, index) => {
         const osc = oscillatorsRef.current[index];
         const isEnabled = voiceMappingConfig[voice.id].enabled;
+        const nextNote = harmonyResult.notesByVoice[voice.id];
         if (!osc) return;
 
-        osc.frequency.setTargetAtTime(midiNoteToFrequency(midiNotes[voice.id]), now, 0.05);
+        if (nextNote !== null) {
+          osc.frequency.setTargetAtTime(midiNoteToFrequency(nextNote), now, 0.05);
+        }
 
-        const shouldBeActive = isEnabled && (!isArpEnabled ? shouldKeepNotesActive : activeArpVoiceId === voice.id);
+        const shouldBeActive = isEnabled && nextNote !== null && (!isArpEnabled ? shouldKeepNotesActive : activeArpVoiceId === voice.id);
         const isActive = voiceGateStateRef.current[index];
 
         if (shouldBeActive) {
@@ -750,7 +764,6 @@ export default function App() {
       arpIndex,
       enabledVoiceIds,
       getPedalMidiNote,
-      getVoiceMidiNotes,
       gateOffVoice,
       gateOnVoice,
       isArpEnabled,
@@ -762,23 +775,8 @@ export default function App() {
     ],
   );
 
-  const setVoiceMidiNote = useCallback(
-    (voice: VoiceId, nextNote: number | null) => {
-      const activeVoice = activeMidiNotesRef.current.find((entry) => entry.voice === voice);
-      if (!activeVoice || activeVoice.note === nextNote) return;
-
-      if (activeVoice.note !== null) {
-        sendNoteOff(activeVoice.note);
-      }
-      if (nextNote !== null) {
-        sendNoteOn(nextNote, midiVelocity);
-      }
-      activeVoice.note = nextNote;
-    },
-    [midiVelocity, sendNoteOff, sendNoteOn],
-  );
-
   const clearActiveMidiNotes = useCallback(() => {
+    flushPendingMidiNoteOffs();
     activeMidiNotesRef.current.forEach((activeVoice) => {
       if (activeVoice.note !== null) {
         sendNoteOff(activeVoice.note);
@@ -792,7 +790,15 @@ export default function App() {
     }
     heldVoiceNotesRef.current = null;
     heldPedalNoteRef.current = null;
-  }, [sendNoteOff]);
+    latestHarmonyResultRef.current = null;
+    latestRgbRef.current = null;
+  }, [flushPendingMidiNoteOffs, sendNoteOff]);
+
+  useEffect(() => {
+    if (!isMidiLegatoEnabled) {
+      flushPendingMidiNoteOffs();
+    }
+  }, [flushPendingMidiNoteOffs, isMidiLegatoEnabled]);
 
   const captureHeldNotes = useCallback(() => {
     heldVoiceNotesRef.current = activeMidiNotesRef.current.reduce((acc, voiceState) => {
@@ -808,31 +814,67 @@ export default function App() {
     (nextNote: number | null) => {
       if (activePedalNoteRef.current === nextNote) return;
 
-      if (activePedalNoteRef.current !== null) {
-        sendNoteOff(activePedalNoteRef.current);
+      if (isMidiLegatoEnabled && nextNote !== null) {
+        if (!cancelPendingMidiNoteOff(nextNote)) {
+          sendNoteOn(nextNote, midiVelocity);
+        }
+        if (activePedalNoteRef.current !== null) {
+          scheduleMidiNoteOff(activePedalNoteRef.current);
+        }
+      } else {
+        if (activePedalNoteRef.current !== null) {
+          sendNoteOff(activePedalNoteRef.current);
+        }
+        if (nextNote !== null && !cancelPendingMidiNoteOff(nextNote)) {
+          sendNoteOn(nextNote, midiVelocity);
+        }
       }
-      if (nextNote !== null) {
-        sendNoteOn(nextNote, midiVelocity);
-      }
+
       activePedalNoteRef.current = nextNote;
     },
-    [midiVelocity, sendNoteOff, sendNoteOn],
+    [cancelPendingMidiNoteOff, isMidiLegatoEnabled, midiVelocity, scheduleMidiNoteOff, sendNoteOff, sendNoteOn],
   );
 
   const applyMidiNotes = useCallback(
-    (notes: Record<VoiceId, number>, pedalNote: number | null) => {
+    (notes: VoiceNoteById, pedalNote: number | null) => {
       const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
-
-      MELODIC_VOICES.forEach((voice) => {
+      const currentNotesByVoice = activeMidiNotesRef.current.reduce((currentNotes, activeVoice) => {
+        currentNotes[activeVoice.voice] = activeVoice.note;
+        return currentNotes;
+      }, {} as Partial<Record<VoiceId, number | null>>);
+      const targetNotesByVoice = MELODIC_VOICES.reduce((targetNotes, voice) => {
         const isEnabled = voiceMappingConfig[voice.id].enabled;
-        const nextNote = !isEnabled
+        targetNotes[voice.id] = !isEnabled
           ? null
           : isArpEnabled
             ? voice.id === activeArpVoiceId
               ? notes[voice.id]
               : null
             : notes[voice.id];
-        setVoiceMidiNote(voice.id, nextNote);
+        return targetNotes;
+      }, {} as Partial<Record<VoiceId, number | null>>);
+      const transition = getMidiNoteTransition(currentNotesByVoice, targetNotesByVoice);
+
+      if (isMidiLegatoEnabled) {
+        const noteOffPlan = getMidiLegatoNoteOffPlan(currentNotesByVoice, targetNotesByVoice, transition.notesOff);
+        transition.notesOn.forEach((note) => {
+          if (!cancelPendingMidiNoteOff(note)) {
+            sendNoteOn(note, midiVelocity);
+          }
+        });
+        noteOffPlan.immediateNotesOff.forEach((note) => sendNoteOff(note));
+        noteOffPlan.delayedNotesOff.forEach((note) => scheduleMidiNoteOff(note));
+      } else {
+        transition.notesOff.forEach((note) => sendNoteOff(note));
+        transition.notesOn.forEach((note) => {
+          if (!cancelPendingMidiNoteOff(note)) {
+            sendNoteOn(note, midiVelocity);
+          }
+        });
+      }
+
+      activeMidiNotesRef.current.forEach((activeVoice) => {
+        activeVoice.note = transition.nextNotesByVoice[activeVoice.voice];
       });
 
       setPedalMidiNote(pedalNote);
@@ -840,7 +882,22 @@ export default function App() {
         captureHeldNotes();
       }
     },
-    [arpIndex, captureHeldNotes, enabledVoiceIds, isArpEnabled, isSustainKeyDown, isSustainLatched, setPedalMidiNote, setVoiceMidiNote, voiceMappingConfig],
+    [
+      arpIndex,
+      captureHeldNotes,
+      enabledVoiceIds,
+      isArpEnabled,
+      isSustainKeyDown,
+      isSustainLatched,
+      isMidiLegatoEnabled,
+      midiVelocity,
+      cancelPendingMidiNoteOff,
+      scheduleMidiNoteOff,
+      sendNoteOff,
+      sendNoteOn,
+      setPedalMidiNote,
+      voiceMappingConfig,
+    ],
   );
 
   // Arpeggiator Loop
@@ -858,7 +915,8 @@ export default function App() {
       if (!isArpEnabled && isMouseDown && audioCtxRef.current) {
         const now = audioCtxRef.current.currentTime;
         MELODIC_VOICES.forEach((voice, index) => {
-          const shouldBeActive = voiceMappingConfig[voice.id].enabled;
+          const nextNote = latestHarmonyResultRef.current?.notesByVoice[voice.id] ?? null;
+          const shouldBeActive = voiceMappingConfig[voice.id].enabled && nextNote !== null;
           const isActive = voiceGateStateRef.current[index];
           if (shouldBeActive && !isActive) {
             gateOnVoice(index, voice.gain, now);
@@ -889,8 +947,9 @@ export default function App() {
     const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
     const now = audioCtxRef.current.currentTime;
     MELODIC_VOICES.forEach((voice, index) => {
+      const nextNote = latestHarmonyResultRef.current?.notesByVoice[voice.id] ?? null;
       const shouldBeActive =
-        voiceMappingConfig[voice.id].enabled && voice.id === activeArpVoiceId;
+        voiceMappingConfig[voice.id].enabled && nextNote !== null && voice.id === activeArpVoiceId;
       const isActive = voiceGateStateRef.current[index];
       if (shouldBeActive) {
         gateOnVoice(index, ARP_ACTIVE_GAIN, now, true);
@@ -906,10 +965,14 @@ export default function App() {
 
   // Update MIDI note allocation when arp/chord mode changes.
   useEffect(() => {
-    if (!isMouseDown || !latestMidiNotesRef.current || !latestRgbRef.current) return;
+    if (!isMouseDown || !latestHarmonyResultRef.current || !latestRgbRef.current) return;
     const { r, g, b } = latestRgbRef.current;
-    applyMidiNotes(latestMidiNotesRef.current, getPedalMidiNote(r, g, b, false));
-  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, voiceMappingConfig]);
+    const harmonyResult = getCurrentHarmonyResult(r, g, b, currentHSB, {
+      previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
+    });
+    latestHarmonyResultRef.current = harmonyResult;
+    applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
+  }, [applyMidiNotes, arpIndex, currentHSB, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, voiceMappingConfig]);
 
   const sampleColor = useCallback(
     (x: number, y: number, emitMidi: boolean) => {
@@ -927,17 +990,28 @@ export default function App() {
       setCurrentRGB({ r, g, b });
       setCurrentHSB(hsb);
       latestRgbRef.current = { r, g, b };
+      const harmonyResult = getCurrentHarmonyResult(
+        r,
+        g,
+        b,
+        hsb,
+        emitMidi
+          ? {
+              previousNotesByVoice: latestHarmonyResultRef.current?.notesByVoice,
+            }
+          : undefined,
+      );
+
       if (emitMidi) {
-        updateFrequencies(r, g, b, hsb);
+        updateFrequencies(harmonyResult, r, g, b);
       }
 
       if (!emitMidi) return;
 
-      const midiNotes = getVoiceMidiNotes(r, g, b, hsb);
-      latestMidiNotesRef.current = midiNotes;
-      applyMidiNotes(midiNotes, getPedalMidiNote(r, g, b, true));
+      latestHarmonyResultRef.current = harmonyResult;
+      applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, true));
     },
-    [applyMidiNotes, getPedalMidiNote, getVoiceMidiNotes, updateFrequencies],
+    [applyMidiNotes, getCurrentHarmonyResult, getPedalMidiNote, updateFrequencies],
   );
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1168,25 +1242,24 @@ export default function App() {
   }, []);
 
   const liveVoiceRows = useMemo(() => {
+    const harmonyResult =
+      shouldKeepNotesActive && latestHarmonyResultRef.current
+        ? latestHarmonyResultRef.current
+        : getCurrentHarmonyResult(currentRGB.r, currentRGB.g, currentRGB.b, currentHSB);
     return MELODIC_VOICES.map((voice) => {
       const config = voiceMappingConfig[voice.id];
-      const rawValue = getRawVoiceValue(voice.id, currentRGB.r, currentRGB.g, currentRGB.b, currentHSB);
-      const normalizedValue = normalizeVoiceInput(rawValue, config.inputRange);
-      const midiNote = clamp(
-        getMidiNote(currentScale, normalizedValue, baseMidiNote, config.octaveSpan, config.degreeBias),
-        0,
-        127,
-      );
+      const voiceResult = harmonyResult.voices.find((entry) => entry.voice === voice.id);
+      const outputMidiNote = voiceResult?.outputMidiNote ?? null;
       return {
         id: voice.id,
         label: voice.label,
         source: voice.source,
         enabled: config.enabled,
-        degree: getScaleDegree(normalizedValue, config.octaveSpan, config.degreeBias),
-        noteName: midiNoteToName(midiNote),
+        degreeLabel: outputMidiNote === null ? '-' : (getScaleDegreeForMidiNote(currentScale, baseMidiNote, outputMidiNote)?.toString() ?? '-'),
+        noteName: outputMidiNote === null ? 'Rest' : midiNoteToName(outputMidiNote),
       };
     });
-  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getRawVoiceValue, voiceMappingConfig]);
+  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getCurrentHarmonyResult, shouldKeepNotesActive, voiceMappingConfig]);
 
   const togglePanel = useCallback((panelId: ControlPanelId) => {
     setOpenPanels((prev) => ({
@@ -1293,7 +1366,7 @@ export default function App() {
                   </div>
                   <div className="mt-1 flex items-center justify-between font-mono text-xs">
                     <span className="text-zinc-200">{voice.enabled ? voice.noteName : 'Muted'}</span>
-                    <span className="text-emerald-400">Deg {voice.degree}</span>
+                    <span className="text-emerald-400">Deg {voice.degreeLabel}</span>
                   </div>
                 </div>
               ))}
@@ -1324,6 +1397,92 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Harmony</div>
+                  <select
+                    value={harmonyModelId}
+                    onChange={(e) => setHarmonyModelId(e.target.value as HarmonyModelId)}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                  >
+                    {HARMONY_MODELS.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-zinc-500 uppercase">Harmony Source</div>
+                  <select
+                    value={harmonySourceMode}
+                    onChange={(e) => setHarmonySourceMode(e.target.value as HarmonySourceMode)}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                  >
+                    <option value="image">Image-derived</option>
+                    <option value="manual-progression">Manual progression</option>
+                  </select>
+                </div>
+                {harmonySourceMode === 'manual-progression' && (
+                  <div className="space-y-2 rounded-lg border border-white/10 bg-black/30 p-2">
+                    <textarea
+                      value={manualProgressionText}
+                      onChange={(e) => setManualProgressionText(e.target.value)}
+                      rows={4}
+                      spellCheck={false}
+                      className="w-full resize-y bg-black/40 border border-white/10 rounded-lg px-2.5 py-2 text-xs font-mono text-zinc-200 min-h-20"
+                    />
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-mono text-zinc-200">{activeManualChord?.symbol ?? 'No valid chords'}</span>
+                      <span className="font-mono text-emerald-400">
+                        {manualProgression.chords.length > 0
+                          ? `${(manualProgressionIndex % manualProgression.chords.length) + 1}/${manualProgression.chords.length}`
+                          : '0/0'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={resetManualProgression}
+                        disabled={manualProgression.chords.length === 0}
+                        title="Reset manual progression"
+                        className="px-2 py-1 text-[10px] rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 disabled:text-zinc-600 disabled:hover:bg-white/5"
+                      >
+                        Reset
+                      </button>
+                      <button
+                        type="button"
+                        onClick={advanceManualProgression}
+                        disabled={manualProgression.chords.length === 0}
+                        title="Advance manual progression"
+                        className="px-2 py-1 text-[10px] rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 disabled:text-zinc-600 disabled:hover:bg-white/5"
+                      >
+                        Next
+                      </button>
+                    </div>
+                    {manualProgression.invalidSymbols.length > 0 && (
+                      <div className="text-[10px] text-amber-300">
+                        Ignored: {manualProgression.invalidSymbols.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {harmonyModelId !== 'off' && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Gravity</span>
+                      <span>{Math.round(harmonyGravity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={Math.round(harmonyGravity * 100)}
+                      onChange={(e) => setHarmonyGravity(parseInt(e.target.value, 10) / 100)}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                )}
                 <div className="space-y-1">
                   <div className="text-[9px] text-zinc-500 uppercase">Base Note (Freq + MIDI)</div>
                   <select
@@ -1696,6 +1855,32 @@ export default function App() {
                     className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
                   />
                 </div>
+                <label className="flex items-center justify-between gap-2 text-xs text-zinc-300 pt-1 border-t border-white/5">
+                  <span>Legato overlap</span>
+                  <input
+                    type="checkbox"
+                    checked={isMidiLegatoEnabled}
+                    onChange={(e) => setIsMidiLegatoEnabled(e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                </label>
+                {isMidiLegatoEnabled && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
+                      <span>Overlap</span>
+                      <span>{midiLegatoOverlapMs}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="5"
+                      max="200"
+                      step="5"
+                      value={midiLegatoOverlapMs}
+                      onChange={(e) => setMidiLegatoOverlapMs(parseInt(e.target.value, 10))}
+                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                )}
                 {midiError && <div className="text-[11px] text-red-400">{midiError}</div>}
               </div>
             )}
