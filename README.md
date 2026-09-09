@@ -75,6 +75,10 @@ npm run build
 
 ## Controls Quick Reference
 
+The desktop workspace keeps base note, scale, harmony source/model, and Gravity above the image. The six voice readouts below the image include their enable checkboxes. Open **Presets** to choose a gradient, or **Setup** for pedal, arpeggiator, audio/envelope/filter, and MIDI settings. **Panic** immediately silences internal audio and releases MIDI notes.
+
+**Manual · prototype** retains the experimental text progression controls. The planned harmony-card palette and chord-builder modal are not implemented yet.
+
 - **Modal Scale**: choose the active mode
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
 - **Enable Pedal Tone**: adds a sustained pedal voice

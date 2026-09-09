@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Upload, Music, Settings2, Info, ChevronDown, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
+import { Upload, Music, Settings2, Info, ChevronDown, SlidersHorizontal, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
 import {
@@ -203,8 +203,8 @@ export default function App() {
     audio: false,
     midi: false,
   });
-  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
-  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+  const [isSetupOpen, setIsSetupOpen] = useState(false);
+  const [isPresetBrowserOpen, setIsPresetBrowserOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -221,6 +221,10 @@ export default function App() {
   } = useMidiOutput();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const setupRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (isSetupOpen) setupRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [isSetupOpen]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const oscillatorsRef = useRef<OscillatorNode[]>([]);
   const gainNodesRef = useRef<GainNode[]>([]);
@@ -1109,7 +1113,7 @@ export default function App() {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'Space') return;
+      if (event.code !== 'Space' || isKeyboardInputTarget(event.target)) return;
       event.preventDefault();
       if (!isSustainKeyDown) {
         setIsSustainKeyDown(true);
@@ -1121,7 +1125,7 @@ export default function App() {
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== 'Space') return;
+      if (event.code !== 'Space' || (!isSustainKeyDown && isKeyboardInputTarget(event.target))) return;
       event.preventDefault();
       setIsSustainKeyDown(false);
       setIsSustainLatched(false);
@@ -1267,7 +1271,6 @@ export default function App() {
       [panelId]: !prev[panelId],
     }));
   }, []);
-  const isSidebarOpen = isSidebarPinned || isSidebarHovered;
 
   const renderPanelHeader = useCallback(
     (panelId: ControlPanelId, title: string, icon: React.ReactNode) => {
@@ -1300,128 +1303,161 @@ export default function App() {
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
-      {/* Header */}
-      <header className="border-b border-white/5 bg-black/20 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold tracking-tight text-pink-400 drop-shadow-[0_0_8px_rgba(236,72,153,0.35)]">ChromaSyn</h1>
-            <button
-              type="button"
-              onClick={() => setIsHelpOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 text-xs"
-              aria-label="Open Help"
-            >
-              <Info className="w-3.5 h-3.5" />
-              Help
-            </button>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className={`text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full border ${isSustainLatched ? 'text-emerald-300 border-emerald-400/40 bg-emerald-500/15' : 'text-zinc-400 border-white/10 bg-white/5'}`}>
-              Sustain: {isSustainLatched ? 'Active' : 'Hold Space'}
-            </div>
-            <label className="flex items-center gap-2 px-4 py-2 bg-pink-500 hover:bg-pink-400 text-white rounded-lg cursor-pointer transition-all active:scale-95 font-medium text-sm border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.45)]">
-              <Upload className="w-4 h-4" />
-              <span>Load Image</span>
-              <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-            </label>
-          </div>
+      <header className="instrument-header">
+        <div className="brand"><span className="brand-mark" aria-hidden="true">◈</span><h1>ChromaSyn</h1><span className="brand-caption">COLOR INTO SOUND</span></div>
+        <div className="header-actions">
+          <span className="output-status"><i className={shouldUseWebAudio ? 'status-dot' : 'status-dot midi'} />{shouldUseWebAudio ? 'Internal audio' : 'MIDI output'}</span>
+          <button className="quiet-button" onClick={() => setIsHelpOpen(true)}><Info size={15} />Help</button>
+          <button className="quiet-button" aria-expanded={isSetupOpen} aria-controls="instrument-setup" onClick={() => setIsSetupOpen(!isSetupOpen)}><SlidersHorizontal size={15} />Setup</button>
+          <button className="panic-button" onClick={() => {
+            setIsMouseDown(false); setIsSustainKeyDown(false); setIsSustainLatched(false);
+            heldVoiceNotesRef.current = null; heldPedalNoteRef.current = null;
+            clearActiveMidiNotes();
+            if (audioCtxRef.current) {
+              const now = audioCtxRef.current.currentTime;
+              gainNodesRef.current.forEach((node) => {
+                node.gain.cancelScheduledValues(now);
+                node.gain.setValueAtTime(0, now);
+              });
+              voiceGateStateRef.current.fill(false);
+            }
+            resetPedalPersonalityState();
+            panic();
+          }}><Square size={12} fill="currentColor" />Panic</button>
         </div>
       </header>
 
-      <div
-        className={`fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-[300px] transition-transform duration-200 ${
-          isSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%-28px)]'
-        }`}
-        onMouseEnter={() => setIsSidebarHovered(true)}
-        onMouseLeave={() => setIsSidebarHovered(false)}
-      >
-        <aside
-          className={`relative h-full bg-[#0b0b0b]/95 backdrop-blur-md border-r border-white/10 px-2.5 py-3 space-y-3 ${
-            isSidebarOpen ? 'overflow-y-auto' : 'overflow-hidden'
-          }`}
-        >
-          <button
-            type="button"
-            onClick={() => setIsSidebarPinned((prev) => !prev)}
-            className="absolute right-0 top-[13px] h-10 w-7 rounded-l-md bg-pink-500 border border-pink-300/80 shadow-[0_0_14px_rgba(236,72,153,0.55)] flex items-center justify-center text-white hover:bg-pink-400 hover:shadow-[0_0_18px_rgba(244,114,182,0.75)]"
-            title={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
-            aria-label={isSidebarPinned ? 'Unpin Controls' : 'Pin Controls'}
-          >
-            {isSidebarPinned ? <Lock className="w-4 h-4" /> : isSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          </button>
+      <main className="instrument-workspace">
+        <section className="musical-toolbar" aria-label="Musical controls">
+          <label className="musical-field"><span>Base note</span><select value={baseMidiNote} onChange={(e) => setBaseMidiNote(Number(e.target.value))}>{BASE_NOTE_OPTIONS.map((option) => <option key={option.midiNote} value={option.midiNote}>{option.label}</option>)}</select></label>
+          <label className="musical-field"><span>Scale / mode</span><select value={currentScale.name} onChange={(e) => { const scale = SCALES.find((entry) => entry.name === e.target.value); if (scale) setCurrentScale(scale); }}>{SCALES.map((scale) => <option key={scale.name}>{scale.name}</option>)}</select></label>
+          <label className="musical-field"><span>Harmony source</span><select value={harmonySourceMode} onChange={(e) => setHarmonySourceMode(e.target.value as HarmonySourceMode)}><option value="image">Image-derived</option><option value="manual-progression">Manual · prototype</option></select></label>
+          <label className="musical-field"><span>Harmony model</span><select value={harmonyModelId} onChange={(e) => setHarmonyModelId(e.target.value as HarmonyModelId)}>{HARMONY_MODELS.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+          <label className="musical-field gravity-field"><span>Gravity <b>{harmonyModelId === 'off' ? 'Bypassed' : `${Math.round(harmonyGravity * 100)}%`}</b></span><input aria-label="Harmonic gravity" type="range" min="0" max="100" value={Math.round(harmonyGravity * 100)} disabled={harmonyModelId === 'off'} onChange={(e) => setHarmonyGravity(Number(e.target.value) / 100)} /></label>
+          <div className={`hold-indicator ${isSustainLatched ? 'is-held' : ''}`}><span>{isSustainLatched ? 'SUSTAINING' : 'SUSTAIN'}</span><kbd>SPACE</kbd></div>
+        </section>
 
-          {/* live data feed */}
-          <section className={`${PANEL_SHELL_CLASS} space-y-3`}>
-            <div className="flex items-center gap-2 text-zinc-400">
-              <Info className="w-3.5 h-3.5" />
-              <h2 className="text-[11px] font-bold uppercase tracking-widest">Live Data</h2>
+        <div className="image-heading">
+          <div><span className="eyebrow">PLAY SURFACE</span><p>Explore a color. Find a sound.</p></div>
+          <div className="header-actions">
+            <button className="quiet-button" aria-expanded={isPresetBrowserOpen} aria-controls="preset-browser" onClick={() => setIsPresetBrowserOpen(!isPresetBrowserOpen)}>Presets <ChevronDown size={14} /></button>
+            <label className="image-upload"><Upload size={15} />Load image<input aria-label="Load image" type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} /></label>
+          </div>
+        </div>
+        {isPresetBrowserOpen && <section id="preset-browser" aria-label="Image presets">          <div className="bg-white/5 rounded-2xl p-4 border border-white/10 mb-4 overflow-x-auto">
+            <div className="flex items-center gap-2 text-zinc-400 mb-3">
+              <Settings2 className="w-3.5 h-3.5" />
+              <h2 className="text-[10px] font-bold uppercase tracking-widest">Preset Gradients</h2>
             </div>
-            <div className="space-y-1.5">
-              {liveVoiceRows.map((voice) => (
-                <div key={voice.id} className="bg-black/40 rounded-lg p-2 border border-white/5">
-                  <div className="flex items-center justify-between text-[9px] uppercase text-zinc-500">
-                    <span>{voice.label}</span>
-                    <span>{voice.source}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between font-mono text-xs">
-                    <span className="text-zinc-200">{voice.enabled ? voice.noteName : 'Muted'}</span>
-                    <span className="text-emerald-400">Deg {voice.degreeLabel}</span>
-                  </div>
-                </div>
+            <div className="flex gap-3 pb-2">
+              {PRESETS.map((preset, index) => (
+                <button
+                  key={preset.name}
+                  onClick={() => { loadPreset(preset); setIsPresetBrowserOpen(false); }}
+                  title={PRESET_HOTKEYS[index] ? `${preset.name} (${PRESET_HOTKEYS[index].toUpperCase()})` : preset.name}
+                  className="flex-shrink-0 group relative w-24 space-y-2 text-center"
+                >
+                  <div
+                    className="w-24 h-16 rounded-lg border border-white/10 shadow-lg transition-transform group-hover:scale-105 group-active:scale-95"
+                    style={{ background: preset.gradient }}
+                  />
+                  <div className="text-[10px] text-zinc-500 font-medium leading-tight truncate w-full group-hover:text-zinc-300">{preset.name}</div>
+                </button>
               ))}
             </div>
-            <div className="pt-2 border-t border-white/5">
-              <div className="text-[9px] text-zinc-500 uppercase mb-1 text-center">Pedal Tone</div>
-              <div className="text-center font-mono text-xs text-zinc-200">
-                {isPedalToneEnabled && previewPedalDegree && previewPedalNoteName ? `Degree ${previewPedalDegree} - ${previewPedalNoteName} (${pedalPersonality})` : 'Disabled'}
-              </div>
-            </div>
-          </section>
+          </div>
 
-          <section className={PANEL_SHELL_CLASS}>
-            {renderPanelHeader('scale', 'Modal Scale', <Settings2 className="w-3.5 h-3.5" />)}
-            {openPanels.scale && (
-              <div className="mt-3 space-y-2.5">
-                <select
-                  value={currentScale.name}
-                  onChange={(e) => {
-                    const selected = SCALES.find((scale) => scale.name === e.target.value);
-                    if (selected) setCurrentScale(selected);
-                  }}
-                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+</section>}
+          <div className="image-stage">
+            {!isCanvasPopulated ? (
+              <div className="text-center space-y-3 p-6">
+                <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto border border-white/10">
+                  <Upload className="w-8 h-8 text-zinc-600" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-medium text-zinc-300">No Image Loaded</h3>
+                  <p className="text-zinc-500 text-sm mt-1">Upload an image to start playin</p>
+                </div>
+              </div>
+            ) : (
+              <div className="image-surface relative cursor-none touch-none">
+                <canvas
+                  ref={canvasRef}
+                  onMouseMove={handleMouseMove}
+                  onMouseDown={handleMouseDown}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  className="performance-canvas"
+                />
+
+                {/* Custom Cursor */}
+                <motion.div
+                  className="absolute pointer-events-none z-10"
+                  animate={{ x: cursorPos.x, y: cursorPos.y }}
+                  transition={{ type: 'spring', damping: 10, stiffness: 750, mass: 0.1 }}
+                  style={{ left: -20, top: -20 }}
                 >
-                  {SCALES.map((scale) => (
-                    <option key={scale.name} value={scale.name}>
-                      {scale.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="space-y-1">
-                  <div className="text-[9px] text-zinc-500 uppercase">Harmony</div>
-                  <select
-                    value={harmonyModelId}
-                    onChange={(e) => setHarmonyModelId(e.target.value as HarmonyModelId)}
-                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
+                  <div
+                    className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
+                      isMouseDown
+                        ? 'scale-125 border-pink-400 bg-pink-400/20 shadow-[0_0_20px_rgba(244,114,182,0.45)]'
+                        : 'border-white/50 bg-white/10'
+                    }`}
                   >
-                    {HARMONY_MODELS.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-[9px] text-zinc-500 uppercase">Harmony Source</div>
-                  <select
-                    value={harmonySourceMode}
-                    onChange={(e) => setHarmonySourceMode(e.target.value as HarmonySourceMode)}
-                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
-                  >
-                    <option value="image">Image-derived</option>
-                    <option value="manual-progression">Manual progression</option>
-                  </select>
-                </div>
+                    <div className="w-1 h-1 bg-white rounded-full" />
+                  </div>
+                </motion.div>
+
+                {/* Floating Info Overlay */}
+                <AnimatePresence>
+                  {isMouseDown && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-4 text-xs font-mono pointer-events-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                        <span>{currentRGB.r}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-green-500" />
+                        <span>{currentRGB.g}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-blue-500" />
+                        <span>{currentRGB.b}</span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between text-[10px] text-zinc-400 uppercase tracking-widest px-2 stage-footer">
+            <span>
+              Canvas Resolution: {canvasRef.current?.width || 0}x{canvasRef.current?.height || 0}
+            </span>
+            <span>
+              Audio Status:{' '}
+              {shouldUseWebAudio ? (isAudioStarted ? 'Ready' : 'Waiting for Interaction') : 'Muted (MIDI Active)'}
+            </span>
+          </div>
+
+        <section className="voice-monitor" aria-label="Live voices">
+          <div className="monitor-heading"><span className="eyebrow">SIX VOICES</span><span>{shouldKeepNotesActive ? 'Output · held / playing' : 'Preview · hover the image'}</span></div>
+          <div className="voice-strip">{liveVoiceRows.map((voice) => (
+            <div key={voice.id} className={`voice-cell voice-${voice.id} ${voice.enabled ? '' : 'voice-muted'}`}>
+              <label className="voice-label"><span><i />{voice.label}</span><input type="checkbox" aria-label={`Enable ${voice.label} voice`} checked={voice.enabled} onChange={(e) => setVoiceEnabled(voice.id, e.target.checked)} /></label>
+              <div className="voice-pitch"><strong>{voice.enabled ? voice.noteName : 'Muted'}</strong><span>Deg {voice.enabled ? voice.degreeLabel : '—'}</span></div>
+            </div>
+          ))}</div>
+          <div className="monitor-footer"><span>{harmonyModelId === 'off' ? 'Harmony off · original color mapping' : `${selectedHarmonyModel.name} · ${Math.round(harmonyGravity * 100)}% gravity`}</span><span>Pedal {isPedalToneEnabled && previewPedalNoteName ? `${previewPedalNoteName} · ${pedalPersonality}` : 'off'}</span><span>Arpeggiator {isArpEnabled ? `${arpSpeed} ms` : 'off'}</span></div>
+        </section>
+
+        {harmonySourceMode === 'manual-progression' && <details className="prototype-panel"><summary>Manual progression prototype · {activeManualChord?.symbol ?? 'No valid chords'}</summary>
                 {harmonySourceMode === 'manual-progression' && (
                   <div className="space-y-2 rounded-lg border border-white/10 bg-black/30 p-2">
                     <textarea
@@ -1466,37 +1502,16 @@ export default function App() {
                     )}
                   </div>
                 )}
-                {harmonyModelId !== 'off' && (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] text-zinc-500 uppercase">
-                      <span>Gravity</span>
-                      <span>{Math.round(harmonyGravity * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={Math.round(harmonyGravity * 100)}
-                      onChange={(e) => setHarmonyGravity(parseInt(e.target.value, 10) / 100)}
-                      className="w-full accent-emerald-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
-                )}
-                <div className="space-y-1">
-                  <div className="text-[9px] text-zinc-500 uppercase">Base Note (Freq + MIDI)</div>
-                  <select
-                    value={String(baseMidiNote)}
-                    onChange={(e) => setBaseMidiNote(parseInt(e.target.value, 10))}
-                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200"
-                  >
-                    {BASE_NOTE_OPTIONS.map((option) => (
-                      <option key={option.midiNote} value={option.midiNote}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+
+        </details>}
+
+        <section ref={setupRef} id="instrument-setup" className="setup-area" hidden={!isSetupOpen} aria-label="Instrument setup">
+          <div className="monitor-heading"><div><span className="eyebrow">INSTRUMENT SETUP</span><p>Shape the sound and connect your instruments.</p></div><button className="quiet-button" onClick={() => setIsSetupOpen(false)}>Close setup</button></div>
+          <div className="setup-grid">
+          <section className={PANEL_SHELL_CLASS}>
+            {renderPanelHeader('scale', 'Pedal tone', <Settings2 className="w-3.5 h-3.5" />)}
+            {openPanels.scale && (
+              <div className="mt-3 space-y-2.5">
                 <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
                   <span>Enable Pedal Tone</span>
                   <input
@@ -1534,64 +1549,6 @@ export default function App() {
                     ))}
                   </select>
                 </div>
-                <div className="pt-2 border-t border-white/5 space-y-1.5">
-                  <div className="text-[9px] text-zinc-500 uppercase">Voice Toggles</div>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Red Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.r.enabled}
-                      onChange={(e) => setVoiceEnabled('r', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Green Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.g.enabled}
-                      onChange={(e) => setVoiceEnabled('g', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Blue Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.b.enabled}
-                      onChange={(e) => setVoiceEnabled('b', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                  <div className="pt-1 text-[9px] text-zinc-500 uppercase">HSB</div>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Hue Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.h.enabled}
-                      onChange={(e) => setVoiceEnabled('h', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Saturation Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.s.enabled}
-                      onChange={(e) => setVoiceEnabled('s', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                    <span>Brightness Note</span>
-                    <input
-                      type="checkbox"
-                      checked={voiceMappingConfig.v.enabled}
-                      onChange={(e) => setVoiceEnabled('v', e.target.checked)}
-                      className="h-4 w-4 accent-emerald-500"
-                    />
-                  </label>
-                </div>
               </div>
             )}
           </section>
@@ -1603,6 +1560,8 @@ export default function App() {
                 <div className="flex items-center justify-between text-xs text-zinc-300">
                   <span>Enabled</span>
                   <button
+                    aria-label="Enable arpeggiator"
+                    aria-pressed={isArpEnabled}
                     onClick={() => setIsArpEnabled(!isArpEnabled)}
                     className={`w-10 h-5 rounded-full transition-colors relative ${isArpEnabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
                   >
@@ -1885,113 +1844,9 @@ export default function App() {
               </div>
             )}
           </section>
-        </aside>
-      </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        {/* Canvas Area */}
-        <div className="space-y-4">
-          <div className="bg-white/5 rounded-2xl p-4 border border-white/10 mb-4 overflow-x-auto">
-            <div className="flex items-center gap-2 text-zinc-400 mb-3">
-              <Settings2 className="w-3.5 h-3.5" />
-              <h2 className="text-[10px] font-bold uppercase tracking-widest">Preset Gradients</h2>
-            </div>
-            <div className="flex gap-3 pb-2">
-              {PRESETS.map((preset, index) => (
-                <button
-                  key={preset.name}
-                  onClick={() => loadPreset(preset)}
-                  title={PRESET_HOTKEYS[index] ? `${preset.name} (${PRESET_HOTKEYS[index].toUpperCase()})` : preset.name}
-                  className="flex-shrink-0 group relative w-24 space-y-2 text-center"
-                >
-                  <div
-                    className="w-24 h-16 rounded-lg border border-white/10 shadow-lg transition-transform group-hover:scale-105 group-active:scale-95"
-                    style={{ background: preset.gradient }}
-                  />
-                  <div className="text-[10px] text-zinc-500 font-medium leading-tight truncate w-full group-hover:text-zinc-300">{preset.name}</div>
-                </button>
-              ))}
-            </div>
           </div>
-
-          <div className="relative group rounded-3xl overflow-hidden bg-black border border-white/10 shadow-2xl min-h-[400px] flex items-center justify-center">
-            {!isCanvasPopulated ? (
-              <div className="text-center space-y-4 p-12">
-                <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto border border-white/10">
-                  <Upload className="w-8 h-8 text-zinc-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-medium text-zinc-300">No Image Loaded</h3>
-                  <p className="text-zinc-500 text-sm mt-1">Upload an image to start playin</p>
-                </div>
-              </div>
-            ) : (
-              <div className="relative cursor-none touch-none">
-                <canvas
-                  ref={canvasRef}
-                  onMouseMove={handleMouseMove}
-                  onMouseDown={handleMouseDown}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                  className="block max-w-full h-auto"
-                />
-
-                {/* Custom Cursor */}
-                <motion.div
-                  className="absolute pointer-events-none z-10"
-                  animate={{ x: cursorPos.x, y: cursorPos.y }}
-                  transition={{ type: 'spring', damping: 10, stiffness: 750, mass: 0.1 }}
-                  style={{ left: -20, top: -20 }}
-                >
-                  <div
-                    className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
-                      isMouseDown
-                        ? 'scale-125 border-pink-400 bg-pink-400/20 shadow-[0_0_20px_rgba(244,114,182,0.45)]'
-                        : 'border-white/50 bg-white/10'
-                    }`}
-                  >
-                    <div className="w-1 h-1 bg-white rounded-full" />
-                  </div>
-                </motion.div>
-
-                {/* Floating Info Overlay */}
-                <AnimatePresence>
-                  {isMouseDown && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-4 text-xs font-mono pointer-events-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-red-500" />
-                        <span>{currentRGB.r}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500" />
-                        <span>{currentRGB.g}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-blue-500" />
-                        <span>{currentRGB.b}</span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between text-[10px] text-zinc-600 uppercase tracking-widest px-2">
-            <span>
-              Canvas Resolution: {canvasRef.current?.width || 0}x{canvasRef.current?.height || 0}
-            </span>
-            <span>
-              Audio Status:{' '}
-              {shouldUseWebAudio ? (isAudioStarted ? 'Ready' : 'Waiting for Interaction') : 'Muted (MIDI Active)'}
-            </span>
-          </div>
-        </div>
+        </section>
       </main>
 
       <AnimatePresence>
