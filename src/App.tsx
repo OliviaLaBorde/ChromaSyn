@@ -90,16 +90,18 @@ const BASE_NOTE_OPTIONS = Array.from({ length: 61 }, (_, i) => {
   };
 });
 
+const CHROMA_WHEEL_COLORS = ['#c81828', '#d58d2e', '#b6e146', '#60e3ed', '#5e8bbc', '#923fb0'] as const;
+const CHROMA_WHEEL_GRADIENT = `conic-gradient(from 180deg, ${[...CHROMA_WHEEL_COLORS, CHROMA_WHEEL_COLORS[0]].join(', ')})`;
 const PRESETS = [
-  { name: 'Dusk', gradient: 'linear-gradient(120deg, #1b1b3a 0%, #693668 35%, #a74482 65%, #f84aa7 100%)' },
+  { name: 'Velvet Current', gradient: 'linear-gradient(120deg, #111827 0%, #5e8bbc 30%, #923fb0 64%, #c81828 100%)' },
   { name: 'Golden Teal Bands', gradient: 'linear-gradient(90deg, #0b1320 0%, #0ea5a5 40%, #f59e0b 75%, #fff1c1 100%)' },
   { name: 'Aurora bands', gradient: 'linear-gradient(180deg, #031926 0%, #0b7a75 33%, #00d1b2 55%, #f4f9e9 100%)' },
   { name: 'Bruised', gradient: 'linear-gradient(135deg, #0b0f1a 0%, #3a0ca3 30%, #7209b7 55%, #f72585 100%)' },
   { name: 'Sunrise', gradient: 'linear-gradient(90deg, #140f2d 0%, #c92c6d 35%, #ff7a00 65%, #ffe29a 100%)' },
-  { name: 'Ocean', gradient: 'linear-gradient(110deg, #0a0f14 0%, #12324a 45%, #2aa198 70%, #d0f0e8 100%)' },
-  { name: 'MidnightDesert', gradient: 'linear-gradient(145deg, #0d1b2a 0%, #415a77 35%, #e0a458 70%, #fef3c7 100%)' },
-  { name: 'Triadic playground', gradient: 'conic-gradient(from 180deg, #ff005d, #00d4ff, #00ff85, #ffb703, #ff005d)' },
-  { name: 'Tinted grayscale', gradient: 'linear-gradient(90deg, #101018 0%, #2a2a3a 35%, #7c7cff 70%, #f2f2ff 100%)' },
+  { name: 'Deep Reef', gradient: 'linear-gradient(110deg, #07111d 0%, #173a5e 22%, #5e8bbc 44%, #60e3ed 66%, #3f947d 84%, #b6e146 100%)' },
+  { name: 'Copper Patina', gradient: 'linear-gradient(145deg, #101820 0%, #5e8bbc 28%, #60e3ed 52%, #d58d2e 76%, #c81828 100%)' },
+  { name: 'Chroma Wheel', gradient: CHROMA_WHEEL_GRADIENT },
+  { name: 'Acid Garden', gradient: 'linear-gradient(90deg, #171b16 0%, #4f6f48 24%, #b6e146 52%, #60e3ed 78%, #5e8bbc 100%)' },
   { name: 'Scale Walker', gradient: 'special:scale-walk' },
 ];
 const PRESET_HOTKEYS = ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'] as const;
@@ -473,11 +475,9 @@ export default function App() {
       }
     } else if (preset.gradient.includes('conic-gradient')) {
       const grad = ctx.createConicGradient(Math.PI, 400, 300);
-      grad.addColorStop(0, '#ff005d');
-      grad.addColorStop(0.25, '#00d4ff');
-      grad.addColorStop(0.5, '#00ff85');
-      grad.addColorStop(0.75, '#ffb703');
-      grad.addColorStop(1, '#ff005d');
+      [...CHROMA_WHEEL_COLORS, CHROMA_WHEEL_COLORS[0]].forEach((color, index, colors) => {
+        grad.addColorStop(index / (colors.length - 1), color);
+      });
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, 800, 600);
     } else if (preset.gradient === 'special:scale-walk') {
