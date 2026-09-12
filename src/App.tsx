@@ -57,6 +57,7 @@ const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
 const DEFAULT_MIDI_LEGATO_OVERLAP_MS = 35;
 const DEFAULT_MANUAL_PROGRESSION = 'Dm9\nG13\nCmaj9\nA7alt';
+const DEFAULT_PLAY_IMAGE_URL = `${import.meta.env.BASE_URL}chromasyn.svg?v=3`;
 const MELODIC_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
 const ARP_ACTIVE_GAIN = 0.4;
@@ -102,6 +103,22 @@ const PRESETS = [
   { name: 'Scale Walker', gradient: 'special:scale-walk' },
 ];
 const PRESET_HOTKEYS = ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'] as const;
+const SCALE_WALKER_STEP_COUNT = 8; // Degrees 1-7, then back to 1.
+const getScaleWalkerColor = (stepIndex: number) => {
+  const degree = (stepIndex % 7) + 1;
+  const unit = 255 / 21;
+  const getValue = (scaleDegree: number) => Math.floor((scaleDegree - 1) * unit + unit / 2);
+  return `rgb(${getValue(degree)}, ${getValue(degree + 2)}, ${getValue(degree + 4)})`;
+};
+const SCALE_WALKER_PREVIEW = `linear-gradient(to right, ${Array.from(
+  { length: SCALE_WALKER_STEP_COUNT },
+  (_, index) => {
+    const color = getScaleWalkerColor(index);
+    const start = (index / SCALE_WALKER_STEP_COUNT) * 100;
+    const end = ((index + 1) / SCALE_WALKER_STEP_COUNT) * 100;
+    return `${color} ${start}%, ${color} ${end}%`;
+  },
+).join(', ')})`;
 
 const PANEL_SHELL_CLASS = 'bg-white/5 rounded-xl p-4 border border-white/10';
 const OSCILLATOR_TYPE_OPTIONS: OscillatorType[] = ['sine', 'square', 'sawtooth', 'triangle'];
@@ -158,11 +175,19 @@ const isKeyboardInputTarget = (target: EventTarget | null) => {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || element.isContentEditable;
 };
 
+const shouldIgnoreSustainShortcut = (target: EventTarget | null) => {
+  const element = target as HTMLElement | null;
+  if (element?.matches('.musical-toolbar select')) return false;
+  return isKeyboardInputTarget(target);
+};
+
 // --- Components ---
 
 export default function App() {
-  const [image, setImage] = useState<string | null>(null);
+  const [image, setImage] = useState<string | null>(DEFAULT_PLAY_IMAGE_URL);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedImageName, setUploadedImageName] = useState<string | null>(null);
+  const [imageSourceLabel, setImageSourceLabel] = useState('Starter image · ChromaSyn mark');
   const [currentScale, setCurrentScale] = useState<Scale>(SCALES[0]);
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [isSustainKeyDown, setIsSustainKeyDown] = useState(false);
@@ -174,7 +199,7 @@ export default function App() {
   const [isArpEnabled, setIsArpEnabled] = useState(false);
   const [arpIndex, setArpIndex] = useState(0);
   const [arpSpeed, setArpSpeed] = useState(150); // ms
-  const [isCanvasPopulated, setIsCanvasPopulated] = useState(false);
+  const [isCanvasPopulated, setIsCanvasPopulated] = useState(true);
   const [pendingPreset, setPendingPreset] = useState<typeof PRESETS[0] | null>(null);
   const [disableWebAudioWithMidi, setDisableWebAudioWithMidi] = useState(true);
   const [baseMidiNote, setBaseMidiNote] = useState(DEFAULT_BASE_MIDI_NOTE);
@@ -364,7 +389,9 @@ export default function App() {
       reader.onload = (event) => {
         const nextImage = event.target?.result as string;
         setUploadedImage(nextImage);
+        setUploadedImageName(file.name);
         setImage(nextImage);
+        setImageSourceLabel(`Your image · ${file.name}`);
         setIsCanvasPopulated(true);
       };
       reader.readAsDataURL(file);
@@ -373,8 +400,16 @@ export default function App() {
 
   const loadPreset = useCallback((preset: (typeof PRESETS)[0]) => {
     setPendingPreset(preset);
+    setImageSourceLabel(`Preset · ${preset.name}`);
     setIsCanvasPopulated(true);
     setImage(null);
+  }, []);
+
+  const loadStarterImage = useCallback(() => {
+    setPendingPreset(null);
+    setImage(DEFAULT_PLAY_IMAGE_URL);
+    setImageSourceLabel('Starter image · ChromaSyn mark');
+    setIsCanvasPopulated(true);
   }, []);
 
   const showToast = useCallback((message: string) => {
@@ -395,8 +430,9 @@ export default function App() {
     }
     setPendingPreset(null);
     setImage(uploadedImage);
+    setImageSourceLabel(`Your image · ${uploadedImageName ?? 'Uploaded image'}`);
     setIsCanvasPopulated(true);
-  }, [showToast, uploadedImage]);
+  }, [showToast, uploadedImage, uploadedImageName]);
 
   const drawPreset = useCallback((preset: (typeof PRESETS)[0]) => {
     const canvas = canvasRef.current;
@@ -445,22 +481,10 @@ export default function App() {
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, 800, 600);
     } else if (preset.gradient === 'special:scale-walk') {
-      const steps = 8; // 1-7 then back to 1
-      const stepWidth = 800 / steps;
+      const stepWidth = 800 / SCALE_WALKER_STEP_COUNT;
 
-      // Helper to get RGB value for a specific scale degree (1-indexed)
-      const getVal = (deg: number) => {
-        const unit = 255 / 21;
-        return Math.floor((deg - 1) * unit + unit / 2);
-      };
-
-      for (let i = 0; i < steps; i++) {
-        const n = (i % 7) + 1;
-        const r = getVal(n);
-        const g = getVal(n + 2);
-        const b = getVal(n + 4);
-
-        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      for (let i = 0; i < SCALE_WALKER_STEP_COUNT; i++) {
+        ctx.fillStyle = getScaleWalkerColor(i);
         ctx.fillRect(i * stepWidth, 0, stepWidth, 600);
 
         // Add a subtle divider
@@ -1113,7 +1137,7 @@ export default function App() {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || isKeyboardInputTarget(event.target)) return;
+      if (event.code !== 'Space' || shouldIgnoreSustainShortcut(event.target)) return;
       event.preventDefault();
       if (!isSustainKeyDown) {
         setIsSustainKeyDown(true);
@@ -1125,7 +1149,7 @@ export default function App() {
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || (!isSustainKeyDown && isKeyboardInputTarget(event.target))) return;
+      if (event.code !== 'Space' || (!isSustainKeyDown && shouldIgnoreSustainShortcut(event.target))) return;
       event.preventDefault();
       setIsSustainKeyDown(false);
       setIsSustainLatched(false);
@@ -1246,10 +1270,19 @@ export default function App() {
   }, []);
 
   const liveVoiceRows = useMemo(() => {
+    const heldHarmonyResult = latestHarmonyResultRef.current;
     const harmonyResult =
-      shouldKeepNotesActive && latestHarmonyResultRef.current
-        ? latestHarmonyResultRef.current
-        : getCurrentHarmonyResult(currentRGB.r, currentRGB.g, currentRGB.b, currentHSB);
+      isMouseDown && !isSustainLatched && heldHarmonyResult
+        ? heldHarmonyResult
+        : getCurrentHarmonyResult(
+            currentRGB.r,
+            currentRGB.g,
+            currentRGB.b,
+            currentHSB,
+            isSustainLatched && heldHarmonyResult
+              ? { previousNotesByVoice: heldHarmonyResult.notesByVoice }
+              : undefined,
+          );
     return MELODIC_VOICES.map((voice) => {
       const config = voiceMappingConfig[voice.id];
       const voiceResult = harmonyResult.voices.find((entry) => entry.voice === voice.id);
@@ -1263,7 +1296,7 @@ export default function App() {
         noteName: outputMidiNote === null ? 'Rest' : midiNoteToName(outputMidiNote),
       };
     });
-  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getCurrentHarmonyResult, shouldKeepNotesActive, voiceMappingConfig]);
+  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getCurrentHarmonyResult, isMouseDown, isSustainLatched, voiceMappingConfig]);
 
   const togglePanel = useCallback((panelId: ControlPanelId) => {
     setOpenPanels((prev) => ({
@@ -1304,7 +1337,7 @@ export default function App() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
       <header className="instrument-header">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">◈</span><h1>ChromaSyn</h1><span className="brand-caption">COLOR INTO SOUND</span></div>
+        <div className="brand"><button type="button" className="brand-logo-button" aria-label="Load the ChromaSyn starter image" title="Load the ChromaSyn starter image" onClick={(event) => { loadStarterImage(); event.currentTarget.blur(); }}><img className="brand-mark" src={DEFAULT_PLAY_IMAGE_URL} alt="" aria-hidden="true" /></button><h1>ChromaSyn</h1><span className="brand-caption">COLOR INTO SOUND</span></div>
         <div className="header-actions">
           <span className="output-status"><i className={shouldUseWebAudio ? 'status-dot' : 'status-dot midi'} />{shouldUseWebAudio ? 'Internal audio' : 'MIDI output'}</span>
           <button className="quiet-button" onClick={() => setIsHelpOpen(true)}><Info size={15} />Help</button>
@@ -1338,10 +1371,10 @@ export default function App() {
         </section>
 
         <div className="image-heading">
-          <div><span className="eyebrow">PLAY SURFACE</span><p>Explore a color. Find a sound.</p></div>
+          <div><span className="eyebrow">PLAY SURFACE</span><p><span className="image-source">{imageSourceLabel}</span> · Explore a color. Find a sound.</p></div>
           <div className="header-actions">
             <button className="quiet-button" aria-expanded={isPresetBrowserOpen} aria-controls="preset-browser" onClick={() => setIsPresetBrowserOpen(!isPresetBrowserOpen)}>Presets <ChevronDown size={14} /></button>
-            <label className="image-upload"><Upload size={15} />Load image<input aria-label="Load image" type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} /></label>
+            <label className="image-upload"><Upload size={15} />Load your image<input aria-label="Load your image" type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} /></label>
           </div>
         </div>
         {isPresetBrowserOpen && <section id="preset-browser" aria-label="Image presets">          <div className="bg-white/5 rounded-2xl p-4 border border-white/10 mb-4 overflow-x-auto">
@@ -1359,7 +1392,7 @@ export default function App() {
                 >
                   <div
                     className="w-24 h-16 rounded-lg border border-white/10 shadow-lg transition-transform group-hover:scale-105 group-active:scale-95"
-                    style={{ background: preset.gradient }}
+                    style={{ background: preset.gradient === 'special:scale-walk' ? SCALE_WALKER_PREVIEW : preset.gradient }}
                   />
                   <div className="text-[10px] text-zinc-500 font-medium leading-tight truncate w-full group-hover:text-zinc-300">{preset.name}</div>
                 </button>
@@ -1447,7 +1480,7 @@ export default function App() {
           </div>
 
         <section className="voice-monitor" aria-label="Live voices">
-          <div className="monitor-heading"><span className="eyebrow">SIX VOICES</span><span>{shouldKeepNotesActive ? 'Output · held / playing' : 'Preview · hover the image'}</span></div>
+          <div className="monitor-heading"><span className="eyebrow">SIX VOICES</span><span>{isSustainLatched ? 'Preview · held chord sounding' : isMouseDown ? 'Output · playing' : 'Preview · hover the image'}</span></div>
           <div className="voice-strip">{liveVoiceRows.map((voice) => (
             <div key={voice.id} className={`voice-cell voice-${voice.id} ${voice.enabled ? '' : 'voice-muted'}`}>
               <label className="voice-label"><span><i />{voice.label}</span><input type="checkbox" aria-label={`Enable ${voice.label} voice`} checked={voice.enabled} onChange={(e) => setVoiceEnabled(voice.id, e.target.checked)} /></label>

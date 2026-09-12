@@ -10,7 +10,10 @@
 .instrument-header { height: 68px; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #ffffff12; background: #111115; }
 .brand, .header-actions { display: flex; align-items: center; gap: 14px; }
 .brand h1 { font-size: 21px; font-weight: 650; letter-spacing: -.7px; }
-.brand-mark { color: #f18abb; font-size: 31px; }
+.brand-logo-button { width: 44px; height: 44px; flex: 0 0 44px; display: block; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; transition: transform 120ms ease, opacity 120ms ease; }
+.brand-logo-button:hover { transform: scale(1.04); opacity: .9; }
+.brand-logo-button:active { transform: scale(.98); }
+.brand-mark { width: 100%; height: 100%; display: block; border-radius: inherit; }
 .brand-caption { color: #89838f; font-size: 9px; letter-spacing: 2px; margin-left: 12px; }
 .quiet-button, .panic-button, .image-upload { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; border-radius: 7px; font-size: 12px; cursor: pointer; border: 1px solid #ffffff16; color: #d6d2dd; background: #ffffff04; }
 .quiet-button:hover, .quiet-button[aria-expanded=true] { background: #ffffff0e; border-color: #ffffff30; }
@@ -35,6 +38,7 @@
 .hold-indicator.is-held { color: #7fe3be; }
 .image-heading { display: flex; justify-content: space-between; align-items: center; margin: 22px 0 14px; }
 .image-heading p { color: #797380; font-size: 12px; margin-top: 4px; }
+.image-source { color: #b8b1c0; }
 .image-stage { display: flex; align-items: center; justify-content: center; overflow: hidden; height: clamp(220px, calc(100vh - 490px), 680px); min-height: 220px; background: #101015; border: 1px solid #ffffff13; border-radius: 10px; background-image: radial-gradient(ellipse at center, #22202a40, transparent 75%); }
 .image-surface { display: flex; align-items: center; justify-content: center; max-width: 100%; max-height: 100%; }
 .performance-canvas { display: block; max-width: 100%; max-height: clamp(218px, calc(100vh - 492px), 678px); width: auto; height: auto; }
@@ -73,7 +77,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
   .musical-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .voice-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .monitor-footer { flex-wrap: wrap; gap: 8px 16px; }.header-actions { gap: 6px; }
-  .instrument-header { padding: 0 12px; }.brand h1 { font-size: 17px; }.brand-mark { display: none; }
+  .instrument-header { padding: 0 12px; }.brand { gap: 9px; }.brand h1 { font-size: 17px; }.brand-logo-button { width: 36px; height: 36px; flex-basis: 36px; border-radius: 7px; }
   .quiet-button, .panic-button { padding: 8px; }.instrument-workspace { padding: 12px; }
 }
 
