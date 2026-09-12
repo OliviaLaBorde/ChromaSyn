@@ -248,6 +248,7 @@ export default function App() {
   } = useMidiOutput();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const activePointerIdRef = useRef<number | null>(null);
   const setupRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (isSetupOpen) setupRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -750,6 +751,7 @@ export default function App() {
 
       const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
       const now = audioCtxRef.current.currentTime;
+      const shouldPlayNotes = shouldKeepNotesActive || activePointerIdRef.current !== null;
 
       MELODIC_VOICES.forEach((voice, index) => {
         const osc = oscillatorsRef.current[index];
@@ -761,7 +763,7 @@ export default function App() {
           osc.frequency.setTargetAtTime(midiNoteToFrequency(nextNote), now, 0.05);
         }
 
-        const shouldBeActive = isEnabled && nextNote !== null && (!isArpEnabled ? shouldKeepNotesActive : activeArpVoiceId === voice.id);
+        const shouldBeActive = isEnabled && nextNote !== null && (!isArpEnabled ? shouldPlayNotes : activeArpVoiceId === voice.id);
         const isActive = voiceGateStateRef.current[index];
 
         if (shouldBeActive) {
@@ -782,7 +784,7 @@ export default function App() {
           }
         } else {
           pedalOsc.frequency.setTargetAtTime(midiNoteToFrequency(pedalMidiNote), now, 0.05);
-          if (!voiceGateStateRef.current[PEDAL_OSC_INDEX] && shouldKeepNotesActive) {
+          if (!voiceGateStateRef.current[PEDAL_OSC_INDEX] && shouldPlayNotes) {
             gateOnVoice(PEDAL_OSC_INDEX, PEDAL_OSC_GAIN, now);
           }
         }
@@ -1042,20 +1044,37 @@ export default function App() {
     [applyMidiNotes, getCurrentHarmonyResult, getPedalMidiNote, updateFrequencies],
   );
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const samplePointerColor = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>, emitMidi: boolean) => {
+      const canvas = event.currentTarget;
+      const rect = canvas.getBoundingClientRect();
+      const localX = clamp(event.clientX - rect.left, 0, rect.width);
+      const localY = clamp(event.clientY - rect.top, 0, rect.height);
+      const x = clamp(Math.floor((localX / rect.width) * canvas.width), 0, Math.max(0, canvas.width - 1));
+      const y = clamp(Math.floor((localY / rect.height) * canvas.height), 0, Math.max(0, canvas.height - 1));
 
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor(((e.clientX - rect.left) / rect.width) * canvas.width);
-    const y = Math.floor(((e.clientY - rect.top) / rect.height) * canvas.height);
+      setCursorPos({ x: localX, y: localY });
+      sampleColor(x, y, emitMidi);
+    },
+    [sampleColor],
+  );
 
-    setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const activePointerId = activePointerIdRef.current;
+    if (activePointerId !== null && activePointerId !== event.pointerId) return;
+    if (event.pointerType !== 'mouse' && activePointerId === null) return;
 
-    sampleColor(x, y, isMouseDown);
+    event.preventDefault();
+    samplePointerColor(event, activePointerId === event.pointerId);
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerIdRef.current !== null) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    event.preventDefault();
+    activePointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
     resetPedalPersonalityState();
     if (!isAudioStarted && shouldUseWebAudio) {
       initAudio();
@@ -1066,15 +1085,7 @@ export default function App() {
     }
 
     setIsMouseDown(true);
-
-    // Trigger initial sound
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const x = Math.floor(((e.clientX - rect.left) / rect.width) * canvas.width);
-      const y = Math.floor(((e.clientY - rect.top) / rect.height) * canvas.height);
-      sampleColor(x, y, true);
-    }
+    samplePointerColor(event, true);
 
     if (isSustainKeyDown) {
       setIsSustainLatched(true);
@@ -1082,7 +1093,7 @@ export default function App() {
     }
   };
 
-  const handleMouseUp = useCallback(() => {
+  const finishPointerInteraction = useCallback(() => {
     setIsMouseDown(false);
     if (!isSustainLatched) {
       clearActiveMidiNotes();
@@ -1092,6 +1103,17 @@ export default function App() {
     }
     resetPedalPersonalityState();
   }, [clearActiveMidiNotes, isSustainLatched, releaseAllAudioVoices, resetPedalPersonalityState]);
+
+  const handlePointerEnd = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) return;
+
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    activePointerIdRef.current = null;
+    finishPointerInteraction();
+  };
 
 
   useEffect(() => {
@@ -1416,10 +1438,10 @@ export default function App() {
               <div className="image-surface relative cursor-none touch-none">
                 <canvas
                   ref={canvasRef}
-                  onMouseMove={handleMouseMove}
-                  onMouseDown={handleMouseDown}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
+                  onPointerMove={handlePointerMove}
+                  onPointerDown={handlePointerDown}
+                  onPointerUp={handlePointerEnd}
+                  onPointerCancel={handlePointerEnd}
                   className="performance-canvas"
                 />
 
@@ -1925,7 +1947,7 @@ export default function App() {
                   <ol className="list-decimal ml-5 space-y-1">
                     <li>Load an image or pick a preset gradient.</li>
                     <li>Choose a scale mode and base note in the controls.</li>
-                    <li>Click and drag on the canvas to play notes from color regions.</li>
+                    <li>Click or touch and drag on the canvas to play notes from color regions.</li>
                     <li>Use <span className="font-mono">Space</span> to hold/sustain a chord while exploring.</li>
                     <li>Use preset hotkeys <span className="font-mono">z x c v b n m , . /</span> to load presets 1-10.</li>
                     <li>Press <span className="font-mono">A</span> to switch back to your uploaded image at any time.</li>
