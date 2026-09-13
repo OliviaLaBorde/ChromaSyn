@@ -184,6 +184,61 @@ test('Lyrical at zero gravity passes through like the raw six-voice mapper', () 
   assert.deepEqual(result.voices.map((voice) => voice.harmonyAction), Array(6).fill('pass-through'));
 });
 
+test('gravity progressively replaces raw notes with model suppression and remapping', () => {
+  const rawVoices = [
+    rawVoice('r', 48, 0),
+    rawVoice('g', 60, 7),
+    rawVoice('b', 53, 3),
+    rawVoice('h', 57, 5),
+    rawVoice('s', 65, 10),
+    rawVoice('v', 69, 12),
+  ];
+  const resolveAt = (gravity) =>
+    engine.resolveHarmony(
+      rawVoices,
+      { modelId: 'lyrical', gravity, density: 0.75 },
+      { scale: engine.SCALES[0], baseMidiNote: 48 },
+    );
+  const changedVoiceCount = (result) =>
+    result.voices.filter((voice, index) => voice.outputMidiNote !== rawVoices[index].midiNote).length;
+
+  const zero = resolveAt(0);
+  const whisper = resolveAt(0.01);
+  const low = resolveAt(0.1);
+  const middle = resolveAt(0.5);
+  const high = resolveAt(0.8);
+  const full = resolveAt(1);
+  const gravityStages = [zero, whisper, low, middle, high, full];
+  const changedCounts = gravityStages.map(changedVoiceCount);
+  const outputSignatures = gravityStages.map((result) => JSON.stringify(result.notesByVoice));
+
+  assert.equal(changedCounts[0], 0);
+  assert.ok(changedVoiceCount(whisper) > 0);
+  assert.ok(changedCounts.every((count, index) => index === 0 || count >= changedCounts[index - 1]));
+  assert.ok(new Set(outputSignatures).size >= 4);
+  assert.ok(changedVoiceCount(middle) > changedVoiceCount(low));
+  assert.ok(low.voices.some((voice) => voice.harmonyAction === 'suppress'));
+  assert.ok(high.voices.some((voice) => voice.harmonyAction === 'remap'));
+});
+
+test('voice leading leaves low-gravity pass-through voices at their raw pitches', () => {
+  const rawVoices = [
+    rawVoice('r', 96, 28),
+    rawVoice('g', 97, 29),
+  ];
+  const result = engine.resolveHarmony(
+    rawVoices,
+    { modelId: 'lyrical', gravity: 0.01, density: 0.75 },
+    { scale: engine.SCALES[0], baseMidiNote: 48 },
+    { previousNotesByVoice: { r: 60, g: 61 } },
+  );
+
+  assert.equal(result.notesByVoice.r, 96);
+  assert.equal(result.voices[0].harmonyAction, 'pass-through');
+  assert.equal(result.voices[0].voicingAction, undefined);
+  assert.equal(result.voices[1].harmonyAction, 'suppress');
+});
+
 test('voice leading is opt-in and leaves static harmony resolution unchanged without previous context', () => {
   const rawVoices = [rawVoice('r', 84, 21)];
   const result = engine.resolveHarmony(

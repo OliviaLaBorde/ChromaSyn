@@ -1246,6 +1246,99 @@ const scoreVoiceCandidate = (tone: HarmonicTargetTone | undefined, distance: num
   return tone.importance * 2 + tone.support * (0.55 + gravity * 0.35) - distance / 12 - voiceIndex / 1000;
 };
 
+const getGravityThreshold = (rank: number, count: number, first: number, last: number) => {
+  if (count <= 1) return first;
+  return first + (rank / (count - 1)) * (last - first);
+};
+
+const applyHarmonicGravity = (
+  rawVoices: RawVoiceNote[],
+  fullyHarmonizedVoices: HarmonizedVoiceNote[],
+  candidates: VoiceCandidate[],
+  gravity: number,
+) => {
+  if (gravity >= 1) return fullyHarmonizedVoices;
+
+  const candidateByVoice = new Map(candidates.map((candidate) => [candidate.voice, candidate]));
+  const rawVoiceById = new Map(rawVoices.map((voiceNote) => [voiceNote.voice, voiceNote]));
+  const changedVoices = fullyHarmonizedVoices.filter((voiceNote) => {
+    const rawVoice = rawVoiceById.get(voiceNote.voice);
+    return rawVoice && voiceNote.outputMidiNote !== rawVoice.midiNote;
+  });
+  const suppressedVoices = changedVoices
+    .filter((voiceNote) => voiceNote.outputMidiNote === null)
+    .sort((a, b) => {
+      const priorityDifference = (candidateByVoice.get(a.voice)?.priority ?? 0) - (candidateByVoice.get(b.voice)?.priority ?? 0);
+      return priorityDifference || VOICE_IDS.indexOf(a.voice) - VOICE_IDS.indexOf(b.voice);
+    });
+  const remappedVoices = changedVoices
+    .filter((voiceNote) => voiceNote.outputMidiNote !== null)
+    .sort((a, b) => {
+      const priorityDifference = (candidateByVoice.get(b.voice)?.priority ?? 0) - (candidateByVoice.get(a.voice)?.priority ?? 0);
+      return priorityDifference || VOICE_IDS.indexOf(a.voice) - VOICE_IDS.indexOf(b.voice);
+    });
+  const unchangedVoices = fullyHarmonizedVoices
+    .filter((voiceNote) => !changedVoices.includes(voiceNote))
+    .sort((a, b) => {
+      const priorityDifference = (candidateByVoice.get(b.voice)?.priority ?? 0) - (candidateByVoice.get(a.voice)?.priority ?? 0);
+      return priorityDifference || VOICE_IDS.indexOf(a.voice) - VOICE_IDS.indexOf(b.voice);
+    });
+  const suppressionThresholdByVoice = new Map<VoiceId, number>();
+  const remapThresholdByVoice = new Map<VoiceId, number>();
+  const preserveThresholdByVoice = new Map<VoiceId, number>();
+  const changedVoicesInPullOrder = [...suppressedVoices, ...remappedVoices];
+
+  // MIDI pitches cannot interpolate continuously, so gravity advances in small,
+  // deterministic voice-level stages. Non-fitting voices thin out first; stronger
+  // gravity then returns suitable voices on legal model tones.
+  changedVoicesInPullOrder.forEach((voiceNote, rank) => {
+    suppressionThresholdByVoice.set(voiceNote.voice, getGravityThreshold(rank, changedVoicesInPullOrder.length, 0.01, 0.46));
+  });
+  remappedVoices.forEach((voiceNote, rank) => {
+    remapThresholdByVoice.set(voiceNote.voice, getGravityThreshold(rank, remappedVoices.length, 0.58, 0.94));
+  });
+  unchangedVoices.forEach((voiceNote, rank) => {
+    preserveThresholdByVoice.set(voiceNote.voice, getGravityThreshold(rank, unchangedVoices.length, 0.08, 0.65));
+  });
+
+  return fullyHarmonizedVoices.map((voiceNote) => {
+    const rawVoice = rawVoiceById.get(voiceNote.voice);
+    if (!rawVoice) return voiceNote;
+
+    const suppressionThreshold = suppressionThresholdByVoice.get(voiceNote.voice);
+    if (suppressionThreshold !== undefined) {
+      if (gravity < suppressionThreshold) {
+        return {
+          ...rawVoice,
+          outputMidiNote: rawVoice.midiNote,
+          harmonyAction: 'pass-through' as const,
+        };
+      }
+
+      const remapThreshold = remapThresholdByVoice.get(voiceNote.voice);
+      if (remapThreshold !== undefined && gravity < remapThreshold) {
+        return {
+          ...rawVoice,
+          outputMidiNote: null,
+          harmonyRole: voiceNote.harmonyRole,
+          harmonyAction: 'suppress' as const,
+        };
+      }
+
+      return voiceNote;
+    }
+
+    const preserveThreshold = preserveThresholdByVoice.get(voiceNote.voice);
+    if (preserveThreshold === undefined || gravity >= preserveThreshold) return voiceNote;
+
+    return {
+      ...rawVoice,
+      outputMidiNote: rawVoice.midiNote,
+      harmonyAction: 'pass-through' as const,
+    };
+  });
+};
+
 const applyDensityAndDeduplication = (
   candidates: VoiceCandidate[],
   density: number,
@@ -1285,7 +1378,7 @@ const resolveModelHarmony = (
   settings: HarmonyEngineSettings,
   context: HarmonyContext,
 ): HarmonyResult => {
-  if (settings.gravity <= 0.05 || !model.degreeRules) {
+  if (settings.gravity === 0 || !model.degreeRules) {
     return createPassThroughHarmonyResult(rawVoices, settings);
   }
 
@@ -1304,7 +1397,6 @@ const resolveModelHarmony = (
 
   const targetTones = selectedStructure.targetTones;
   const toneByPitchClass = new Map(targetTones.map((tone) => [tone.pitchClass, tone]));
-  const remapLimit = 1 + Math.round(settings.gravity * 7);
 
   const candidates = rawVoices.map((voiceNote, index): VoiceCandidate => {
     const preservedTone = toneByPitchClass.get(getPitchClass(voiceNote.midiNote));
@@ -1319,7 +1411,7 @@ const resolveModelHarmony = (
     }
 
     const nearestTone = findNearestTargetTone(targetTones, voiceNote.midiNote);
-    if (!nearestTone || nearestTone.distance > remapLimit) {
+    if (!nearestTone) {
       return {
         ...voiceNote,
         outputMidiNote: null,
@@ -1337,7 +1429,8 @@ const resolveModelHarmony = (
     };
   });
 
-  const voices = applyDensityAndDeduplication(candidates, settings.density);
+  const fullyHarmonizedVoices = applyDensityAndDeduplication(candidates, settings.density);
+  const voices = applyHarmonicGravity(rawVoices, fullyHarmonizedVoices, candidates, settings.gravity);
   const notesByVoice = voices.reduce((notes, voiceNote) => {
     notes[voiceNote.voice] = voiceNote.outputMidiNote;
     return notes;
@@ -1419,7 +1512,7 @@ export const applyVoiceLeading = (
 
   harmonyResult.voices
     .map((voiceNote, index) => ({ voiceNote, index }))
-    .filter(({ voiceNote }) => voiceNote.outputMidiNote !== null)
+    .filter(({ voiceNote }) => voiceNote.outputMidiNote !== null && voiceNote.harmonyAction !== 'pass-through')
     .sort((a, b) => {
       const aNote = a.voiceNote.outputMidiNote ?? 0;
       const bNote = b.voiceNote.outputMidiNote ?? 0;
