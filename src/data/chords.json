@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "chords": [
+    { "id": "major", "name": "Major", "symbol": "", "category": "Triads", "intervals": [0, 4, 7] },
+    { "id": "minor", "name": "Minor", "symbol": "m", "category": "Triads", "intervals": [0, 3, 7] },
+    { "id": "diminished", "name": "Diminished", "symbol": "dim", "category": "Triads", "intervals": [0, 3, 6] },
+    { "id": "augmented", "name": "Augmented", "symbol": "+", "category": "Triads", "intervals": [0, 4, 8] },
+    { "id": "sus2", "name": "Sus 2", "symbol": "sus2", "category": "Triads", "intervals": [0, 2, 7] },
+    { "id": "sus4", "name": "Sus 4", "symbol": "sus4", "category": "Triads", "intervals": [0, 5, 7] },
+
+    { "id": "six", "name": "Major 6", "symbol": "6", "category": "Sixths", "intervals": [0, 4, 7, 9] },
+    { "id": "minor6", "name": "Minor 6", "symbol": "m6", "category": "Sixths", "intervals": [0, 3, 7, 9] },
+    { "id": "six9", "name": "Major 6/9", "symbol": "6/9", "category": "Sixths", "intervals": [0, 4, 7, 9, 14] },
+    { "id": "minor69", "name": "Minor 6/9", "symbol": "m6/9", "category": "Sixths", "intervals": [0, 3, 7, 9, 14] },
+
+    { "id": "major7", "name": "Major 7", "symbol": "maj7", "category": "Sevenths", "intervals": [0, 4, 7, 11] },
+    { "id": "dominant7", "name": "Dominant 7", "symbol": "7", "category": "Sevenths", "intervals": [0, 4, 7, 10] },
+    { "id": "minor7", "name": "Minor 7", "symbol": "m7", "category": "Sevenths", "intervals": [0, 3, 7, 10] },
+    { "id": "minorMajor7", "name": "Minor major 7", "symbol": "m(maj7)", "category": "Sevenths", "intervals": [0, 3, 7, 11] },
+    { "id": "halfDiminished7", "name": "Minor 7 b5", "symbol": "m7b5", "category": "Sevenths", "intervals": [0, 3, 6, 10] },
+    { "id": "diminished7", "name": "Diminished 7", "symbol": "dim7", "category": "Sevenths", "intervals": [0, 3, 6, 9] },
+
+    { "id": "major9", "name": "Major 9", "symbol": "maj9", "category": "Ninths", "intervals": [0, 4, 7, 11, 14] },
+    { "id": "dominant9", "name": "Dominant 9", "symbol": "9", "category": "Ninths", "intervals": [0, 4, 7, 10, 14] },
+    { "id": "minor9", "name": "Minor 9", "symbol": "m9", "category": "Ninths", "intervals": [0, 3, 7, 10, 14] },
+    { "id": "dominant7Flat9", "name": "Dominant 7 b9", "symbol": "7b9", "category": "Ninths", "intervals": [0, 4, 7, 10, 13] },
+    { "id": "dominant7Sharp9", "name": "Dominant 7 #9", "symbol": "7#9", "category": "Ninths", "intervals": [0, 4, 7, 10, 15] },
+
+    { "id": "major7Sharp11", "name": "Major 7 #11", "symbol": "maj7#11", "category": "Extensions", "intervals": [0, 4, 7, 11, 18] },
+    { "id": "minor11", "name": "Minor 11", "symbol": "m11", "category": "Extensions", "intervals": [0, 3, 7, 10, 14, 17] },
+    { "id": "dominant11", "name": "Dominant 11", "symbol": "11", "category": "Extensions", "intervals": [0, 4, 7, 10, 14, 17] },
+    { "id": "dominant13", "name": "Dominant 13", "symbol": "13", "category": "Extensions", "intervals": [0, 4, 7, 10, 14, 21] },
+    { "id": "dominant7Flat13", "name": "Dominant 7 b13", "symbol": "7b13", "category": "Extensions", "intervals": [0, 4, 7, 10, 20] },
+    { "id": "dominant7Sharp11", "name": "Dominant 7 #11", "symbol": "7#11", "category": "Extensions", "intervals": [0, 4, 7, 10, 18] },
+    { "id": "dominant13Flat9", "name": "Dominant 13 b9", "symbol": "13b9", "category": "Extensions", "intervals": [0, 4, 7, 10, 13, 21] }
+  ]
+}

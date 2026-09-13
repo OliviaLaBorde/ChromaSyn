@@ -108,6 +108,22 @@ export type ManualHarmonyChord = {
   structure: ChromaticStructure;
 };
 
+export type ProgressionChord = {
+  id: string;
+  rootPitchClass: number;
+  pitchClasses: number[];
+  label: string;
+  sourcePresetId?: string;
+};
+
+export type ChordDefinition = {
+  id: string;
+  name: string;
+  symbol: string;
+  category: string;
+  intervals: number[];
+};
+
 export type ChordProgressionParseResult = {
   chords: ManualHarmonyChord[];
   invalidSymbols: string[];
@@ -592,10 +608,11 @@ export const midiNoteToFrequency = (midiNote: number) => {
   return 440 * Math.pow(2, (midiNote - 69) / 12);
 };
 
+export const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+
 export const midiNoteToName = (midiNote: number) => {
-  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const clamped = Math.max(0, Math.min(127, midiNote));
-  const name = names[clamped % 12];
+  const name = PITCH_CLASS_NAMES[clamped % 12];
   const octave = Math.floor(clamped / 12) - 1;
   return `${name}${octave}`;
 };
@@ -743,6 +760,94 @@ const getManualChordHarmonicFunction = (normalizedSuffix: string, scaleDegree: S
   if (hasDominantQuality || scaleDegree === 5 || scaleDegree === 7) return 'dominant';
   if (scaleDegree === 2 || scaleDegree === 4) return 'predominant';
   return 'tonic';
+};
+
+export const getChordPitchClasses = (rootPitchClass: number, intervals: number[]) => {
+  const pitchClasses: number[] = [];
+  intervals.forEach((interval) => {
+    const pitchClass = positiveModulo(Math.round(rootPitchClass) + Math.round(interval), 12);
+    if (!pitchClasses.includes(pitchClass)) pitchClasses.push(pitchClass);
+  });
+  return pitchClasses;
+};
+
+export const validateChordCatalog = (catalog: unknown): ChordDefinition[] => {
+  if (!catalog || typeof catalog !== 'object') throw new Error('Chord catalog must be an object.');
+  const candidate = catalog as { schemaVersion?: unknown; chords?: unknown };
+  if (candidate.schemaVersion !== 1) throw new Error('Unsupported chord catalog schema version.');
+  if (!Array.isArray(candidate.chords)) throw new Error('Chord catalog must include a chords array.');
+
+  const seenIds = new Set<string>();
+  return candidate.chords.map((entry, index) => {
+    if (!entry || typeof entry !== 'object') throw new Error(`Chord definition ${index + 1} must be an object.`);
+    const chord = entry as Partial<ChordDefinition>;
+    if (!chord.id?.trim() || !chord.name?.trim() || !chord.category?.trim() || typeof chord.symbol !== 'string') {
+      throw new Error(`Chord definition ${index + 1} has invalid metadata.`);
+    }
+    if (seenIds.has(chord.id)) throw new Error(`Duplicate chord definition ID: ${chord.id}`);
+    seenIds.add(chord.id);
+    if (!Array.isArray(chord.intervals) || chord.intervals.length === 0) {
+      throw new Error(`Chord definition ${chord.id} must include intervals.`);
+    }
+    if (chord.intervals.some((interval) => !Number.isFinite(interval) || !Number.isInteger(interval) || interval < -24 || interval > 36)) {
+      throw new Error(`Chord definition ${chord.id} contains an invalid interval.`);
+    }
+    if (new Set(chord.intervals.map((interval) => positiveModulo(interval, 12))).size !== chord.intervals.length) {
+      throw new Error(`Chord definition ${chord.id} contains duplicate pitch classes.`);
+    }
+
+    return {
+      id: chord.id,
+      name: chord.name,
+      symbol: chord.symbol,
+      category: chord.category,
+      intervals: [...chord.intervals],
+    };
+  });
+};
+
+const getToneRoleForPitchClassInterval = (interval: number): ToneRole => {
+  if (interval === 0) return 'root';
+  if (interval === 1) return 'flatNinth';
+  if (interval === 2) return 'ninth';
+  if (interval === 3 || interval === 4) return 'third';
+  if (interval === 5) return 'eleventh';
+  if (interval === 6) return 'sharpEleventh';
+  if (interval === 7) return 'fifth';
+  if (interval === 8) return 'flatThirteenth';
+  if (interval === 9) return 'thirteenth';
+  return 'seventh';
+};
+
+export const createManualHarmonyChord = (
+  chord: Pick<ProgressionChord, 'rootPitchClass' | 'pitchClasses' | 'label'>,
+  scale: Scale,
+  baseMidiNote: number,
+): ManualHarmonyChord => {
+  const rootPitchClass = positiveModulo(Math.round(chord.rootPitchClass), 12);
+  const basePitchClass = positiveModulo(Math.round(baseMidiNote), 12);
+  const rootMidiNote = Math.round(clamp(baseMidiNote + positiveModulo(rootPitchClass - basePitchClass, 12), 0, 127));
+  const scaleStep = getScaleStepForMidiNote(scale, baseMidiNote, rootMidiNote);
+  const scaleDegree = (positiveModulo(scaleStep, 7) + 1) as ScaleDegree;
+  const intervals = chord.pitchClasses.map((pitchClass) => {
+    const interval = positiveModulo(Math.round(pitchClass) - rootPitchClass, 12);
+    return chordTone(interval, getToneRoleForPitchClassInterval(interval));
+  });
+
+  return {
+    symbol: chord.label,
+    rootName: PITCH_CLASS_NAMES[rootPitchClass],
+    rootMidiNote,
+    scaleStep,
+    scaleDegree,
+    harmonicFunction: getManualChordHarmonicFunction('', scaleDegree),
+    structure: {
+      type: 'chromatic',
+      intervals,
+      weight: 5,
+      label: chord.label,
+    },
+  };
 };
 
 export const parseChordSymbol = (symbol: string, scale: Scale, baseMidiNote: number): ManualHarmonyChord | null => {
@@ -1378,7 +1483,7 @@ const resolveModelHarmony = (
   settings: HarmonyEngineSettings,
   context: HarmonyContext,
 ): HarmonyResult => {
-  if (settings.gravity === 0 || !model.degreeRules) {
+  if (!context.manualChord && (settings.gravity === 0 || !model.degreeRules)) {
     return createPassThroughHarmonyResult(rawVoices, settings);
   }
 
@@ -1430,7 +1535,9 @@ const resolveModelHarmony = (
   });
 
   const fullyHarmonizedVoices = applyDensityAndDeduplication(candidates, settings.density);
-  const voices = applyHarmonicGravity(rawVoices, fullyHarmonizedVoices, candidates, settings.gravity);
+  const voices = context.manualChord
+    ? fullyHarmonizedVoices
+    : applyHarmonicGravity(rawVoices, fullyHarmonizedVoices, candidates, settings.gravity);
   const notesByVoice = voices.reduce((notes, voiceNote) => {
     notes[voiceNote.voice] = voiceNote.outputMidiNote;
     return notes;
@@ -1563,7 +1670,7 @@ export const resolveHarmony = (
   const normalizedSettings = normalizeHarmonySettings(settings);
   const model = getHarmonyModel(normalizedSettings.modelId);
 
-  if (model.id === 'off' || !context) {
+  if (!context || (model.id === 'off' && !context.manualChord)) {
     return createPassThroughHarmonyResult(rawVoices, normalizedSettings);
   }
 

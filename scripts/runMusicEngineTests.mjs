@@ -4,6 +4,7 @@ import ts from 'typescript';
 
 const sourceUrl = new URL('../src/musicEngine.ts', import.meta.url);
 const source = fs.readFileSync(sourceUrl, 'utf8');
+const chordCatalog = JSON.parse(fs.readFileSync(new URL('../src/data/chords.json', import.meta.url), 'utf8'));
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -88,6 +89,71 @@ test('parses manual chord progression symbols into harmonic contexts', () => {
     result.chords[3].structure.intervals.map((tone) => tone.role),
     ['root', 'third', 'seventh', 'flatNinth', 'sharpNinth', 'sharpEleventh', 'flatThirteenth'],
   );
+});
+
+test('validates the external chord catalog and generates arbitrary-root pitch classes', () => {
+  const definitions = engine.validateChordCatalog(chordCatalog);
+  const minor9 = definitions.find((definition) => definition.id === 'minor9');
+
+  assert.equal(definitions.length, 28);
+  assert.ok(minor9);
+  assert.deepEqual(engine.getChordPitchClasses(2, minor9.intervals), [2, 5, 9, 0, 4]);
+  assert.throws(
+    () => engine.validateChordCatalog({ schemaVersion: 1, chords: [
+      { id: 'duplicate', name: 'Duplicate', symbol: '', category: 'Test', intervals: [0, 12] },
+    ] }),
+    /duplicate pitch classes/i,
+  );
+});
+
+test('manual progression chords keep every model inside the authored pitch-class boundary', () => {
+  const progressionChord = {
+    id: 'c-major-custom',
+    rootPitchClass: 0,
+    pitchClasses: [0, 4, 7, 10],
+    label: 'C7 custom',
+  };
+  const manualChord = engine.createManualHarmonyChord(progressionChord, engine.SCALES[0], 48);
+  const rawVoices = [
+    rawVoice('r', 49, 0),
+    rawVoice('g', 54, 2),
+    rawVoice('b', 57, 4),
+    rawVoice('h', 61, 6),
+    rawVoice('s', 66, 8),
+    rawVoice('v', 71, 10),
+  ];
+  const allowed = new Set(progressionChord.pitchClasses);
+
+  engine.HARMONY_MODELS.forEach((model) => {
+    [0, 0.5, 1].forEach((gravity) => {
+      const result = engine.resolveHarmony(
+        rawVoices,
+        { modelId: model.id, gravity, density: model.defaultDensity },
+        { scale: engine.SCALES[0], baseMidiNote: 48, manualChord },
+        { previousNotesByVoice: { r: 60, g: 64, b: 67 } },
+      );
+      result.voices.forEach((voice) => {
+        if (voice.outputMidiNote !== null) assert.ok(allowed.has(((voice.outputMidiNote % 12) + 12) % 12));
+      });
+      assert.deepEqual(new Set(result.targetTones.map((tone) => tone.pitchClass)), allowed);
+    });
+  });
+});
+
+test('manual progression models cannot invent a color tone absent from the authored chord', () => {
+  const manualChord = engine.createManualHarmonyChord(
+    { rootPitchClass: 0, pitchClasses: [0, 4, 7], label: 'C' },
+    engine.SCALES[0],
+    48,
+  );
+  const result = engine.resolveHarmony(
+    [rawVoice('r', 54, 3), rawVoice('g', 58, 5), rawVoice('b', 61, 7)],
+    { modelId: 'tension', gravity: 1, density: 1 },
+    { scale: engine.SCALES[0], baseMidiNote: 48, manualChord },
+  );
+
+  assert.deepEqual(result.targetTones.map((tone) => tone.pitchClass), [0, 4, 7]);
+  assert.equal(result.targetTones.some((tone) => tone.pitchClass === 6), false);
 });
 
 test('normalizes voice ranges with the existing ordered-range behavior', () => {

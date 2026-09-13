@@ -2,6 +2,17 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Upload, Music, Settings2, Info, ChevronDown, SlidersHorizontal, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useMidiOutput } from './useMidiOutput';
+import { ChordBuilderModal } from './components/ChordBuilderModal';
+import { ProgressionStrip } from './components/ProgressionStrip';
+import {
+  CHORD_DEFINITIONS,
+  MAX_PROGRESSION_CHORDS,
+  createProgressionChordId,
+  getProgressionHotkeyIndex,
+  loadManualProgressionSession,
+  reorderProgression,
+  saveManualProgressionSession,
+} from './manualProgression';
 import {
   DEFAULT_HARMONY_ENGINE_SETTINGS,
   DEFAULT_OCTAVE_SPAN,
@@ -15,12 +26,14 @@ import {
   getScaleDegreeForMidiNote,
   midiNoteToFrequency,
   midiNoteToName,
-  parseChordProgression,
+  createManualHarmonyChord,
   rgbToHsb,
   type HarmonyEngineSettings,
   type HarmonyModelId,
   type HarmonyResult,
+  type HarmonySourceId,
   type HsbColor,
+  type ProgressionChord,
   type Scale,
   type VoiceDescriptor,
   type VoiceId,
@@ -42,7 +55,6 @@ type PendingMidiNoteOff = {
   timeoutId: number;
 };
 
-type HarmonySourceMode = 'image' | 'manual-progression';
 type PedalPersonality = 'classic' | 'anchor' | 'inertia' | 'edge-walk';
 type ControlPanelId = 'scale' | 'arp' | 'audio' | 'midi';
 type FilterMode = 'lowpass' | 'highpass';
@@ -56,7 +68,6 @@ type AdsrSettings = {
 const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
 const DEFAULT_MIDI_LEGATO_OVERLAP_MS = 35;
-const DEFAULT_MANUAL_PROGRESSION = 'Dm9\nG13\nCmaj9\nA7alt';
 const DEFAULT_PLAY_IMAGE_URL = `${import.meta.env.BASE_URL}chromasyn.svg?v=3`;
 const MELODIC_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
@@ -169,23 +180,26 @@ const stepDegreeToward = (from: number, to: number) => {
   return from < to ? from + 1 : from - 1;
 };
 
-const isKeyboardInputTarget = (target: EventTarget | null) => {
+const isEditableInputTarget = (target: EventTarget | null) => {
   const element = target as HTMLElement | null;
   if (!element) return false;
-
   const tag = element.tagName.toLowerCase();
-  return tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || element.isContentEditable;
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || element.isContentEditable;
 };
 
 const shouldIgnoreSustainShortcut = (target: EventTarget | null) => {
   const element = target as HTMLElement | null;
-  if (element?.matches('.musical-toolbar select')) return false;
-  return isKeyboardInputTarget(target);
+  if (!element) return false;
+  if (element.isContentEditable || element.tagName.toLowerCase() === 'textarea') return true;
+  if (!(element instanceof HTMLInputElement)) return false;
+
+  return ['text', 'search', 'email', 'url', 'tel', 'password', 'number', 'file'].includes(element.type);
 };
 
 // --- Components ---
 
 export default function App() {
+  const [initialProgressionSession] = useState(loadManualProgressionSession);
   const [image, setImage] = useState<string | null>(DEFAULT_PLAY_IMAGE_URL);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [uploadedImageName, setUploadedImageName] = useState<string | null>(null);
@@ -220,9 +234,11 @@ export default function App() {
   const [adsr, setAdsr] = useState<AdsrSettings>(DEFAULT_ADSR);
   const [harmonyModelId, setHarmonyModelId] = useState<HarmonyModelId>(DEFAULT_HARMONY_ENGINE_SETTINGS.modelId);
   const [harmonyGravity, setHarmonyGravity] = useState(DEFAULT_HARMONY_ENGINE_SETTINGS.gravity);
-  const [harmonySourceMode, setHarmonySourceMode] = useState<HarmonySourceMode>('image');
-  const [manualProgressionText, setManualProgressionText] = useState(DEFAULT_MANUAL_PROGRESSION);
-  const [manualProgressionIndex, setManualProgressionIndex] = useState(0);
+  const [harmonySourceMode, setHarmonySourceMode] = useState<HarmonySourceId>(initialProgressionSession.harmonySource);
+  const [manualProgression, setManualProgression] = useState<ProgressionChord[]>(initialProgressionSession.chords);
+  const [activeManualChordId, setActiveManualChordId] = useState<string | null>(initialProgressionSession.activeChordId);
+  const [isChordBuilderOpen, setIsChordBuilderOpen] = useState(false);
+  const [editingProgressionChord, setEditingProgressionChord] = useState<ProgressionChord | null>(null);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
   const [openPanels, setOpenPanels] = useState<Record<ControlPanelId, boolean>>({
     scale: true,
@@ -262,7 +278,7 @@ export default function App() {
     MELODIC_VOICES.map((voice) => ({ voice: voice.id, note: null })),
   );
   const latestHarmonyResultRef = useRef<HarmonyResult | null>(null);
-  const latestRgbRef = useRef<{ r: number; g: number; b: number } | null>(null);
+  const soundingColorRef = useRef<{ r: number; g: number; b: number; hsb: HsbColor } | null>(null);
   const previousMidiOutputRef = useRef<string>('');
   const activePedalNoteRef = useRef<number | null>(null);
   const pendingMidiNoteOffsRef = useRef<PendingMidiNoteOff[]>([]);
@@ -271,6 +287,10 @@ export default function App() {
   const heldPedalNoteRef = useRef<number | null>(null);
   const voiceGateStateRef = useRef<boolean[]>(Array.from({ length: TOTAL_OSCILLATORS }, () => false));
   const toastTimeoutRef = useRef<number | null>(null);
+  const chordPreviewContextRef = useRef<AudioContext | null>(null);
+  const chordPreviewOscillatorsRef = useRef<OscillatorNode[]>([]);
+  const chordPreviewGainRef = useRef<GainNode | null>(null);
+  const chordPreviewTimeoutRef = useRef<number | null>(null);
   const pedalDegreeRef = useRef<number | null>(null);
   const pedalPersonalityMemoryRef = useRef({
     anchorCandidate: null as number | null,
@@ -296,53 +316,57 @@ export default function App() {
     }),
     [harmonyGravity, harmonyModelId, selectedHarmonyModel.defaultDensity],
   );
-  const manualProgression = useMemo(
-    () => parseChordProgression(manualProgressionText, currentScale, baseMidiNote),
-    [baseMidiNote, currentScale, manualProgressionText],
+  const activeProgressionChord = manualProgression.find((chord) => chord.id === activeManualChordId) ?? null;
+  const activeManualChordSignature = activeProgressionChord
+    ? `${activeProgressionChord.id}:${activeProgressionChord.rootPitchClass}:${activeProgressionChord.pitchClasses.join(',')}`
+    : '';
+  const previousActiveManualChordSignatureRef = useRef(activeManualChordSignature);
+  const activeManualChord = useMemo(
+    () => harmonySourceMode === 'manual-progression' && activeProgressionChord
+      ? createManualHarmonyChord(activeProgressionChord, currentScale, baseMidiNote)
+      : undefined,
+    [activeProgressionChord, baseMidiNote, currentScale, harmonySourceMode],
   );
-  const activeManualChord =
-    harmonySourceMode === 'manual-progression' && manualProgression.chords.length > 0
-      ? manualProgression.chords[manualProgressionIndex % manualProgression.chords.length]
-      : undefined;
   const enabledVoiceIds = useMemo(
     () => MELODIC_VOICES.filter((voice) => voiceMappingConfig[voice.id].enabled).map((voice) => voice.id),
     [voiceMappingConfig],
   );
 
   const advanceManualProgression = useCallback(() => {
-    if (manualProgression.chords.length === 0) return;
-    setManualProgressionIndex((prev) => (prev + 1) % manualProgression.chords.length);
-  }, [manualProgression.chords.length]);
+    if (manualProgression.length === 0) return;
+    const activeIndex = manualProgression.findIndex((chord) => chord.id === activeManualChordId);
+    const nextIndex = activeIndex < 0 ? 0 : (activeIndex + 1) % manualProgression.length;
+    setActiveManualChordId(manualProgression[nextIndex].id);
+  }, [activeManualChordId, manualProgression]);
+
+  const reverseManualProgression = useCallback(() => {
+    if (manualProgression.length === 0) return;
+    const activeIndex = manualProgression.findIndex((chord) => chord.id === activeManualChordId);
+    const previousIndex = activeIndex <= 0 ? manualProgression.length - 1 : activeIndex - 1;
+    setActiveManualChordId(manualProgression[previousIndex].id);
+  }, [activeManualChordId, manualProgression]);
 
   const resetManualProgression = useCallback(() => {
-    setManualProgressionIndex(0);
-  }, []);
+    setActiveManualChordId(manualProgression[0]?.id ?? null);
+  }, [manualProgression]);
 
   useEffect(() => {
-    setManualProgressionIndex((prev) => {
-      if (manualProgression.chords.length === 0) return 0;
-      return prev % manualProgression.chords.length;
+    if (manualProgression.length === 0) {
+      if (activeManualChordId !== null) setActiveManualChordId(null);
+      return;
+    }
+    if (!manualProgression.some((chord) => chord.id === activeManualChordId)) {
+      setActiveManualChordId(manualProgression[0].id);
+    }
+  }, [activeManualChordId, manualProgression]);
+
+  useEffect(() => {
+    saveManualProgressionSession({
+      chords: manualProgression,
+      activeChordId: activeManualChordId,
+      harmonySource: harmonySourceMode,
     });
-  }, [manualProgression.chords.length]);
-
-  useEffect(() => {
-    if (harmonySourceMode !== 'manual-progression') return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || isKeyboardInputTarget(event.target)) return;
-
-      if (event.key === ']') {
-        event.preventDefault();
-        advanceManualProgression();
-      } else if (event.key === '[') {
-        event.preventDefault();
-        resetManualProgression();
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [advanceManualProgression, harmonySourceMode, resetManualProgression]);
+  }, [activeManualChordId, harmonySourceMode, manualProgression]);
 
   // Initialize Audio
   const initAudio = useCallback(() => {
@@ -387,6 +411,7 @@ export default function App() {
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.currentTarget.blur();
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -425,6 +450,101 @@ export default function App() {
       toastTimeoutRef.current = null;
     }, 1800);
   }, []);
+
+  const stopChordPreview = useCallback(() => {
+    if (chordPreviewTimeoutRef.current !== null) {
+      window.clearTimeout(chordPreviewTimeoutRef.current);
+      chordPreviewTimeoutRef.current = null;
+    }
+    const context = chordPreviewContextRef.current;
+    const gain = chordPreviewGainRef.current;
+    if (context && gain) {
+      const now = context.currentTime;
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.06);
+      chordPreviewOscillatorsRef.current.forEach((oscillator) => {
+        try { oscillator.stop(now + 0.07); } catch { /* Already stopped. */ }
+      });
+    }
+    chordPreviewOscillatorsRef.current = [];
+    chordPreviewGainRef.current = null;
+    if (gain) window.setTimeout(() => gain.disconnect(), 100);
+  }, []);
+
+  const previewChord = useCallback((pitchClasses: number[]) => {
+    if (pitchClasses.length === 0) return;
+    stopChordPreview();
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const context = chordPreviewContextRef.current ?? new AudioContextClass();
+    chordPreviewContextRef.current = context;
+    if (context.state === 'suspended') void context.resume();
+
+    const gain = context.createGain();
+    const now = context.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.13 / Math.sqrt(pitchClasses.length), now + 0.025);
+    gain.gain.setValueAtTime(0.13 / Math.sqrt(pitchClasses.length), now + 0.72);
+    gain.gain.linearRampToValueAtTime(0, now + 1.05);
+    gain.connect(context.destination);
+
+    chordPreviewGainRef.current = gain;
+    chordPreviewOscillatorsRef.current = pitchClasses.map((pitchClass, index) => {
+      const oscillator = context.createOscillator();
+      oscillator.type = 'triangle';
+      oscillator.detune.setValueAtTime((index - pitchClasses.length / 2) * 1.2, now);
+      oscillator.frequency.setValueAtTime(midiNoteToFrequency(60 + pitchClass), now);
+      oscillator.connect(gain);
+      oscillator.start(now);
+      oscillator.stop(now + 1.08);
+      return oscillator;
+    });
+    chordPreviewTimeoutRef.current = window.setTimeout(() => {
+      chordPreviewOscillatorsRef.current = [];
+      chordPreviewGainRef.current = null;
+      chordPreviewTimeoutRef.current = null;
+      gain.disconnect();
+    }, 1150);
+  }, [stopChordPreview]);
+
+  const openChordBuilder = useCallback((chord: ProgressionChord | null = null) => {
+    setEditingProgressionChord(chord);
+    setIsChordBuilderOpen(true);
+  }, []);
+
+  const closeChordBuilder = useCallback(() => {
+    stopChordPreview();
+    setIsChordBuilderOpen(false);
+    setEditingProgressionChord(null);
+  }, [stopChordPreview]);
+
+  const saveProgressionChord = useCallback((draft: Omit<ProgressionChord, 'id'>) => {
+    if (editingProgressionChord) {
+      setManualProgression((current) => current.map((chord) => chord.id === editingProgressionChord.id ? { ...draft, id: chord.id } : chord));
+    } else {
+      if (manualProgression.length >= MAX_PROGRESSION_CHORDS) return;
+      const chord = { ...draft, id: createProgressionChordId() };
+      setManualProgression((current) => [...current, chord]);
+      if (manualProgression.length === 0) setActiveManualChordId(chord.id);
+    }
+    closeChordBuilder();
+  }, [closeChordBuilder, editingProgressionChord, manualProgression.length]);
+
+  const deleteProgressionChord = useCallback((id: string) => {
+    setManualProgression((current) => {
+      const removedIndex = current.findIndex((chord) => chord.id === id);
+      const next = current.filter((chord) => chord.id !== id);
+      if (id === activeManualChordId) {
+        setActiveManualChordId(next[Math.min(Math.max(removedIndex, 0), Math.max(next.length - 1, 0))]?.id ?? null);
+      }
+      return next;
+    });
+  }, [activeManualChordId]);
+
+  const handleHarmonySourceChange = useCallback((source: HarmonySourceId) => {
+    setHarmonySourceMode(source);
+    if (source === 'manual-progression' && manualProgression.length === 0) openChordBuilder();
+  }, [manualProgression.length, openChordBuilder]);
 
   const switchToUploadedImage = useCallback(() => {
     if (!uploadedImage) {
@@ -506,9 +626,34 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
-      if (isKeyboardInputTarget(event.target)) return;
+      if (isChordBuilderOpen || isHelpOpen || isEditableInputTarget(event.target)) return;
 
       const key = event.key.toLowerCase();
+      if (harmonySourceMode === 'manual-progression' && manualProgression.length > 0) {
+        if (key === 'q') {
+          event.preventDefault();
+          advanceManualProgression();
+          return;
+        }
+        if (key === 'w') {
+          event.preventDefault();
+          reverseManualProgression();
+          return;
+        }
+        if (key === 'e') {
+          event.preventDefault();
+          resetManualProgression();
+          return;
+        }
+
+        const progressionIndex = getProgressionHotkeyIndex(event.key);
+        if (progressionIndex >= 0 && progressionIndex < manualProgression.length) {
+          event.preventDefault();
+          setActiveManualChordId(manualProgression[progressionIndex].id);
+          return;
+        }
+      }
+
       if (key === 'a') {
         event.preventDefault();
         switchToUploadedImage();
@@ -527,7 +672,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [loadPreset, switchToUploadedImage]);
+  }, [advanceManualProgression, harmonySourceMode, isChordBuilderOpen, isHelpOpen, loadPreset, manualProgression, resetManualProgression, reverseManualProgression, switchToUploadedImage]);
 
   const resetPedalPersonalityState = useCallback(() => {
     pedalDegreeRef.current = null;
@@ -821,7 +966,7 @@ export default function App() {
     heldVoiceNotesRef.current = null;
     heldPedalNoteRef.current = null;
     latestHarmonyResultRef.current = null;
-    latestRgbRef.current = null;
+    soundingColorRef.current = null;
   }, [flushPendingMidiNoteOffs, sendNoteOff]);
 
   useEffect(() => {
@@ -993,16 +1138,41 @@ export default function App() {
     }
   }, [arpIndex, enabledVoiceIds, gateOffVoice, gateOnVoice, isArpEnabled, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
-  // Update MIDI note allocation when arp/chord mode changes.
+  // Revoice while the pointer is actively performing. Hover-only preview changes
+  // must never alter a chord latched by the Space sustain gesture.
   useEffect(() => {
-    if (!isMouseDown || !latestHarmonyResultRef.current || !latestRgbRef.current) return;
-    const { r, g, b } = latestRgbRef.current;
-    const harmonyResult = getCurrentHarmonyResult(r, g, b, currentHSB, {
+    if (!isMouseDown || !latestHarmonyResultRef.current || !soundingColorRef.current) return;
+    const { r, g, b, hsb } = soundingColorRef.current;
+    const harmonyResult = getCurrentHarmonyResult(r, g, b, hsb, {
       previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
     });
     latestHarmonyResultRef.current = harmonyResult;
+    updateFrequencies(harmonyResult, r, g, b);
     applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
-  }, [applyMidiNotes, arpIndex, currentHSB, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, voiceMappingConfig]);
+  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, updateFrequencies, voiceMappingConfig]);
+
+  // Progression navigation is an intentional harmonic change, so Q/W/E and card
+  // selection can still revoice the held pixel without letting hover movement do so.
+  useEffect(() => {
+    const previousSignature = previousActiveManualChordSignatureRef.current;
+    previousActiveManualChordSignatureRef.current = activeManualChordSignature;
+    if (
+      previousSignature === activeManualChordSignature ||
+      harmonySourceMode !== 'manual-progression' ||
+      !isSustainLatched ||
+      isMouseDown ||
+      !latestHarmonyResultRef.current ||
+      !soundingColorRef.current
+    ) return;
+
+    const { r, g, b, hsb } = soundingColorRef.current;
+    const harmonyResult = getCurrentHarmonyResult(r, g, b, hsb, {
+      previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
+    });
+    latestHarmonyResultRef.current = harmonyResult;
+    updateFrequencies(harmonyResult, r, g, b);
+    applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
+  }, [activeManualChordSignature, applyMidiNotes, getCurrentHarmonyResult, getPedalMidiNote, harmonySourceMode, isMouseDown, isSustainLatched, updateFrequencies]);
 
   const sampleColor = useCallback(
     (x: number, y: number, emitMidi: boolean) => {
@@ -1019,7 +1189,7 @@ export default function App() {
 
       setCurrentRGB({ r, g, b });
       setCurrentHSB(hsb);
-      latestRgbRef.current = { r, g, b };
+      if (emitMidi) soundingColorRef.current = { r, g, b, hsb };
       const harmonyResult = getCurrentHarmonyResult(
         r,
         g,
@@ -1073,6 +1243,8 @@ export default function App() {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
 
     event.preventDefault();
+    const focusedElement = document.activeElement;
+    if (focusedElement instanceof HTMLElement && focusedElement !== event.currentTarget) focusedElement.blur();
     activePointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     resetPedalPersonalityState();
@@ -1159,7 +1331,7 @@ export default function App() {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || shouldIgnoreSustainShortcut(event.target)) return;
+      if (event.code !== 'Space' || isChordBuilderOpen || isHelpOpen || shouldIgnoreSustainShortcut(event.target)) return;
       event.preventDefault();
       if (!isSustainKeyDown) {
         setIsSustainKeyDown(true);
@@ -1190,7 +1362,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [captureHeldNotes, clearActiveMidiNotes, isMouseDown, isSustainKeyDown, releaseAllAudioVoices]);
+  }, [captureHeldNotes, clearActiveMidiNotes, isChordBuilderOpen, isHelpOpen, isMouseDown, isSustainKeyDown, releaseAllAudioVoices]);
 
   useEffect(() => {
     if (!isAudioStarted || !audioCtxRef.current) return;
@@ -1241,8 +1413,10 @@ export default function App() {
       if (toastTimeoutRef.current !== null) {
         window.clearTimeout(toastTimeoutRef.current);
       }
+      stopChordPreview();
+      if (chordPreviewContextRef.current) void chordPreviewContextRef.current.close();
     };
-  }, []);
+  }, [stopChordPreview]);
 
   useEffect(() => {
     if (image && canvasRef.current) {
@@ -1386,7 +1560,7 @@ export default function App() {
         <section className="musical-toolbar" aria-label="Musical controls">
           <label className="musical-field"><span>Base note</span><select value={baseMidiNote} onChange={(e) => setBaseMidiNote(Number(e.target.value))}>{BASE_NOTE_OPTIONS.map((option) => <option key={option.midiNote} value={option.midiNote}>{option.label}</option>)}</select></label>
           <label className="musical-field"><span>Scale / mode</span><select value={currentScale.name} onChange={(e) => { const scale = SCALES.find((entry) => entry.name === e.target.value); if (scale) setCurrentScale(scale); }}>{SCALES.map((scale) => <option key={scale.name}>{scale.name}</option>)}</select></label>
-          <label className="musical-field"><span>Harmony source</span><select value={harmonySourceMode} onChange={(e) => setHarmonySourceMode(e.target.value as HarmonySourceMode)}><option value="image">Image-derived</option><option value="manual-progression">Manual · prototype</option></select></label>
+          <label className="musical-field"><span>Harmony source</span><select value={harmonySourceMode} onChange={(e) => handleHarmonySourceChange(e.target.value as HarmonySourceId)}><option value="image">Image-derived</option><option value="manual-progression">Manual Progression</option></select></label>
           <label className="musical-field"><span>Harmony model</span><select value={harmonyModelId} onChange={(e) => setHarmonyModelId(e.target.value as HarmonyModelId)}>{HARMONY_MODELS.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
           <label className="musical-field gravity-field"><span>Gravity <b>{harmonyModelId === 'off' ? 'Bypassed' : `${Math.round(harmonyGravity * 100)}%`}</b></span><input aria-label="Harmonic gravity" type="range" min="0" max="100" value={Math.round(harmonyGravity * 100)} disabled={harmonyModelId === 'off'} onChange={(e) => setHarmonyGravity(Number(e.target.value) / 100)} /></label>
           <div className={`hold-indicator ${isSustainLatched ? 'is-held' : ''}`}><span>{isSustainLatched ? 'SUSTAINING' : 'SUSTAIN'}</span><kbd>SPACE</kbd></div>
@@ -1423,6 +1597,24 @@ export default function App() {
           </div>
 
 </section>}
+          {harmonySourceMode === 'manual-progression' && (manualProgression.length > 0 ? (
+            <ProgressionStrip
+              chords={manualProgression}
+              activeChordId={activeManualChordId}
+              maxChords={MAX_PROGRESSION_CHORDS}
+              onAdd={() => openChordBuilder()}
+              onSelect={setActiveManualChordId}
+              onEdit={openChordBuilder}
+              onDelete={deleteProgressionChord}
+              onPreview={previewChord}
+              onReorder={(draggedId, targetId) => setManualProgression((current) => reorderProgression(current, draggedId, targetId))}
+            />
+          ) : (
+            <section className="progression-empty" aria-label="Create a manual chord progression">
+              <div><span className="eyebrow">CHORD PATH</span><strong>Build a progression to define the image’s harmonic world.</strong></div>
+              <button type="button" className="primary-button" onClick={() => openChordBuilder()}>Build first chord</button>
+            </section>
+          ))}
           <div className="image-stage">
             {!isCanvasPopulated ? (
               <div className="text-center space-y-3 p-6">
@@ -1509,56 +1701,8 @@ export default function App() {
               <div className="voice-pitch"><strong>{voice.enabled ? voice.noteName : 'Muted'}</strong><span>Deg {voice.enabled ? voice.degreeLabel : '—'}</span></div>
             </div>
           ))}</div>
-          <div className="monitor-footer"><span>{harmonyModelId === 'off' ? 'Harmony off · original color mapping' : `${selectedHarmonyModel.name} · ${Math.round(harmonyGravity * 100)}% gravity`}</span><span>Pedal {isPedalToneEnabled && previewPedalNoteName ? `${previewPedalNoteName} · ${pedalPersonality}` : 'off'}</span><span>Arpeggiator {isArpEnabled ? `${arpSpeed} ms` : 'off'}</span></div>
+          <div className="monitor-footer"><span>{harmonySourceMode === 'manual-progression' ? `${activeProgressionChord?.label ?? 'No chord'} · ${selectedHarmonyModel.name}` : harmonyModelId === 'off' ? 'Harmony off · original color mapping' : `${selectedHarmonyModel.name} · ${Math.round(harmonyGravity * 100)}% gravity`}</span><span>Pedal {isPedalToneEnabled && previewPedalNoteName ? `${previewPedalNoteName} · ${pedalPersonality}` : 'off'}</span><span>Arpeggiator {isArpEnabled ? `${arpSpeed} ms` : 'off'}</span></div>
         </section>
-
-        {harmonySourceMode === 'manual-progression' && <details className="prototype-panel"><summary>Manual progression prototype · {activeManualChord?.symbol ?? 'No valid chords'}</summary>
-                {harmonySourceMode === 'manual-progression' && (
-                  <div className="space-y-2 rounded-lg border border-white/10 bg-black/30 p-2">
-                    <textarea
-                      value={manualProgressionText}
-                      onChange={(e) => setManualProgressionText(e.target.value)}
-                      rows={4}
-                      spellCheck={false}
-                      className="w-full resize-y bg-black/40 border border-white/10 rounded-lg px-2.5 py-2 text-xs font-mono text-zinc-200 min-h-20"
-                    />
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-mono text-zinc-200">{activeManualChord?.symbol ?? 'No valid chords'}</span>
-                      <span className="font-mono text-emerald-400">
-                        {manualProgression.chords.length > 0
-                          ? `${(manualProgressionIndex % manualProgression.chords.length) + 1}/${manualProgression.chords.length}`
-                          : '0/0'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={resetManualProgression}
-                        disabled={manualProgression.chords.length === 0}
-                        title="Reset manual progression"
-                        className="px-2 py-1 text-[10px] rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 disabled:text-zinc-600 disabled:hover:bg-white/5"
-                      >
-                        Reset
-                      </button>
-                      <button
-                        type="button"
-                        onClick={advanceManualProgression}
-                        disabled={manualProgression.chords.length === 0}
-                        title="Advance manual progression"
-                        className="px-2 py-1 text-[10px] rounded-md border border-white/15 bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 disabled:text-zinc-600 disabled:hover:bg-white/5"
-                      >
-                        Next
-                      </button>
-                    </div>
-                    {manualProgression.invalidSymbols.length > 0 && (
-                      <div className="text-[10px] text-amber-300">
-                        Ignored: {manualProgression.invalidSymbols.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-        </details>}
 
         <section ref={setupRef} id="instrument-setup" className="setup-area" hidden={!isSetupOpen} aria-label="Instrument setup">
           <div className="monitor-heading"><div><span className="eyebrow">INSTRUMENT SETUP</span><p>Shape the sound and connect your instruments.</p></div><button className="quiet-button" onClick={() => setIsSetupOpen(false)}>Close setup</button></div>
@@ -1904,6 +2048,17 @@ export default function App() {
         </section>
       </main>
 
+      <ChordBuilderModal
+        isOpen={isChordBuilderOpen}
+        defaultRootPitchClass={baseMidiNote % 12}
+        definitions={CHORD_DEFINITIONS}
+        editingChord={editingProgressionChord}
+        isAtLimit={manualProgression.length >= MAX_PROGRESSION_CHORDS}
+        onClose={closeChordBuilder}
+        onSave={saveProgressionChord}
+        onPreview={previewChord}
+      />
+
       <AnimatePresence>
         {isHelpOpen && (
           <motion.div
@@ -1952,6 +2107,18 @@ export default function App() {
                     <li>Use preset hotkeys <span className="font-mono">z x c v b n m , . /</span> to load presets 1-10.</li>
                     <li>Press <span className="font-mono">A</span> to switch back to your uploaded image at any time.</li>
                   </ol>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Manual Chord Progression</h3>
+                  <ol className="list-decimal ml-5 space-y-1">
+                    <li>Choose <span className="font-medium">Manual Progression</span> as the Harmony Source.</li>
+                    <li>Pick a root and chord preset, then add or remove exact notes on the piano.</li>
+                    <li>Use the cards above the image to select, preview, edit, delete, or drag chords into a new order.</li>
+                    <li>While performing, press <span className="font-mono">Q</span> for next, <span className="font-mono">W</span> for previous, or <span className="font-mono">E</span> to reset to chord 1.</li>
+                    <li>Use <span className="font-mono">1–9, 0, -, =</span> to select chord positions 1–12 directly.</li>
+                  </ol>
+                  <p>The active chord defines the legal notes; the image and Harmony Model decide how the six voices move through them.</p>
                 </section>
 
                 <section className="space-y-2">
