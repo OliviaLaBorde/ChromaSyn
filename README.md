@@ -104,10 +104,17 @@ Choose **Manual Progression** as the Harmony Source to build a chord path. A cho
 - This app does not send MIDI clock/transport.
 
 
-## What's coming next!
-- Color averaging across 5-10 pixels instead of a single pixel - which will mean bigger jumps to change chords (this will be an option)
-- Zone hotspots with assignable numpad keys so you can play the set chords with your numberpad
-- Oscillator FX expansion - reverb, delay, compressor
+## Future Enhancements
+
+The detailed, canonical project backlog lives in [TODO.md](TODO.md). Planned directions include:
+
+- More harmony/voice-leading ear testing, clearer inferred-anchor and voice-role feedback, and continued Manual Progression polish
+- Mobile sustain controls, larger touch targets, and broader mobile-browser validation
+- Optional multi-pixel color averaging and assignable image-zone hotspots
+- Manual Progression extensions such as tone weights, register ranges, bass/inversion controls, and chord-catalog import/export
+- MIDI input harmony following, MIDI clock/transport support, and a future rhythm interpretation layer
+- Reverb, delay, and compression for the internal synth
+- Validated custom JSON harmony models
 
 
 ## Contributing

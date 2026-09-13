@@ -396,7 +396,9 @@ export default function App() {
 
       osc.type = isPedal ? 'triangle' : oscillatorType; // sine | square | sawtooth | triangle
       osc.detune.setValueAtTime(isPedal ? PEDAL_OSC_DETUNE_CENTS : (voice?.detuneCents ?? 0), ctx.currentTime);
-      gain.gain.setValueAtTime(isPedal ? 0 : (voice?.gain ?? MELODIC_OSC_GAIN), ctx.currentTime);
+      // Oscillators run continuously, so every voice must begin fully gated off.
+      // The first pointer gesture opens only the voices selected by updateFrequencies.
+      gain.gain.setValueAtTime(0, ctx.currentTime);
 
       osc.connect(gain);
       gain.connect(masterFilter);
@@ -848,9 +850,9 @@ export default function App() {
       if (!audioCtx) return;
       const releaseAt = now ?? audioCtx.currentTime;
       for (let i = 0; i < TOTAL_OSCILLATORS; i++) {
-        if (voiceGateStateRef.current[i]) {
-          gateOffVoice(i, releaseAt);
-        }
+        // Release every gain node defensively. A bookkeeping mismatch should
+        // never be able to leave an oscillator audible until Panic is pressed.
+        gateOffVoice(i, releaseAt);
       }
     },
     [gateOffVoice],
@@ -892,7 +894,9 @@ export default function App() {
 
   const updateFrequencies = useCallback(
     (harmonyResult: HarmonyResult, r: number, g: number, b: number) => {
-      if (!audioCtxRef.current || !isAudioStarted || !shouldUseWebAudio) return;
+      // Audio refs are populated synchronously by initAudio during the first
+      // pointer gesture; React's isAudioStarted state updates one render later.
+      if (!audioCtxRef.current || !shouldUseWebAudio) return;
 
       const activeArpVoiceId = enabledVoiceIds.length > 0 ? enabledVoiceIds[arpIndex % enabledVoiceIds.length] : null;
       const now = audioCtxRef.current.currentTime;
@@ -942,7 +946,6 @@ export default function App() {
       gateOffVoice,
       gateOnVoice,
       isArpEnabled,
-      isAudioStarted,
       isMouseDown,
       shouldKeepNotesActive,
       shouldUseWebAudio,
@@ -1567,7 +1570,7 @@ export default function App() {
         </section>
 
         <div className="image-heading">
-          <div><span className="eyebrow">PLAY SURFACE</span><p><span className="image-source">{imageSourceLabel}</span> · Explore a color. Find a sound.</p></div>
+          <div><span className="eyebrow">PLAY SURFACE</span><p><span className="image-source">{imageSourceLabel}</span> · Explore a color. Find a chord.</p></div>
           <div className="header-actions">
             <button className="quiet-button" aria-expanded={isPresetBrowserOpen} aria-controls="preset-browser" onClick={() => setIsPresetBrowserOpen(!isPresetBrowserOpen)}>Presets <ChevronDown size={14} /></button>
             <label className="image-upload"><Upload size={15} />Load your image<input aria-label="Load your image" type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} /></label>
