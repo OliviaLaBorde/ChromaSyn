@@ -617,6 +617,16 @@ export const midiNoteToName = (midiNote: number) => {
   return `${name}${octave}`;
 };
 
+export const getRegisterOffsetLimits = (baseMidiNote: number, maximumOffset = 5) => {
+  const baseNote = Math.round(clamp(baseMidiNote, 0, 127));
+  const offsetLimit = Math.max(0, Math.floor(maximumOffset));
+
+  return {
+    maxBelow: Math.min(offsetLimit, Math.floor(baseNote / 12)),
+    maxAbove: Math.min(offsetLimit, Math.floor((127 - baseNote) / 12)),
+  };
+};
+
 export const getMidiNote = (scale: Scale, normalizedValue: number, baseMidiNote: number, octaveSpan: number, degreeBias: number) => {
   const semitones = getSemitones(scale, normalizedValue, octaveSpan, degreeBias);
   return baseMidiNote + semitones;
@@ -1660,6 +1670,43 @@ export const applyVoiceLeading = (
   };
 };
 
+export const applyRegisterConstraint = (
+  harmonyResult: HarmonyResult,
+  voicingSettings: VoicingSettings = DEFAULT_VOICING_SETTINGS,
+): HarmonyResult => {
+  const settings = normalizeVoicingSettings(voicingSettings);
+  const voices = harmonyResult.voices.map((voiceNote) => {
+    const outputMidiNote = voiceNote.outputMidiNote;
+    if (
+      outputMidiNote === null ||
+      (outputMidiNote >= settings.minMidiNote && outputMidiNote <= settings.maxMidiNote)
+    ) {
+      return voiceNote;
+    }
+
+    return {
+      ...voiceNote,
+      outputMidiNote: getNearestMidiForPitchClassInRange(
+        getPitchClass(outputMidiNote),
+        outputMidiNote,
+        settings.minMidiNote,
+        settings.maxMidiNote,
+      ),
+      voicingAction: 'range-shift' as const,
+    };
+  });
+  const notesByVoice = voices.reduce((notes, voiceNote) => {
+    notes[voiceNote.voice] = voiceNote.outputMidiNote;
+    return notes;
+  }, createEmptyVoiceNotes());
+
+  return {
+    ...harmonyResult,
+    voices,
+    notesByVoice,
+  };
+};
+
 export const resolveHarmony = (
   rawVoices: RawVoiceNote[],
   settings: HarmonyEngineSettings = DEFAULT_HARMONY_ENGINE_SETTINGS,
@@ -1669,15 +1716,14 @@ export const resolveHarmony = (
 ): HarmonyResult => {
   const normalizedSettings = normalizeHarmonySettings(settings);
   const model = getHarmonyModel(normalizedSettings.modelId);
+  const harmonyResult = !context || (model.id === 'off' && !context.manualChord)
+    ? createPassThroughHarmonyResult(rawVoices, normalizedSettings)
+    : resolveModelHarmony(rawVoices, model, normalizedSettings, context);
+  const voicedHarmonyResult = voicingContext && harmonyResult.anchor
+    ? applyVoiceLeading(harmonyResult, voicingContext, voicingSettings)
+    : harmonyResult;
 
-  if (!context || (model.id === 'off' && !context.manualChord)) {
-    return createPassThroughHarmonyResult(rawVoices, normalizedSettings);
-  }
-
-  const harmonyResult = resolveModelHarmony(rawVoices, model, normalizedSettings, context);
-  if (!voicingContext || !harmonyResult.anchor) return harmonyResult;
-
-  return applyVoiceLeading(harmonyResult, voicingContext, voicingSettings);
+  return applyRegisterConstraint(voicedHarmonyResult, voicingSettings);
 };
 
 export const getHarmonyResultForColor = (

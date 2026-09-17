@@ -17,6 +17,7 @@ https://olivialaborde.github.io/ChromaSyn/
 - Click/drag to perform notes from sampled pixels
 - Modal scale selector (Ionian, Dorian, Phrygian, etc.)
 - Base note selector (shared by audio + MIDI mapping)
+- Base-relative melodic register with independent octave limits below and above the base note
 - Arpeggiator mode for all enabled melodic voices
 - Individual RGB+HSB voice toggles
 - MIDI output device picker (Web MIDI)
@@ -31,6 +32,7 @@ https://olivialaborde.github.io/ChromaSyn/
 ## How It Works
 
 - R, G, B, Hue, Saturation, and Brightness values are quantized to scale degrees across ~3 octaves.
+- The Register control octave-folds the final six melodic notes into its displayed range without changing their pitch classes or the underlying color mapping.
 - Each channel drives one melodic voice.
 - Pedal tone (when enabled) follows this rule:
   1. If any voice is degree `1`, pedal uses `1`
@@ -82,6 +84,7 @@ Choose **Manual Progression** as the Harmony Source to build a chord path. A cho
 
 - **Modal Scale**: choose the active mode
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
+- **Register**: sets hard melodic limits below and above the Base Note; the displayed note range applies to previews, Web Audio, and MIDI, but not the independently controlled pedal
 - **Enable Pedal Tone**: adds a sustained pedal voice
 - **Pedal Octave**: pedal register (`1x` highest, `3x` lowest)
 - **Voice Toggles**: toggle Red/Green/Blue/Hue/Saturation/Brightness notes on/off

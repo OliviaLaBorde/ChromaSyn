@@ -71,6 +71,12 @@ test('gets the current scale degree from an output MIDI note', () => {
   assert.equal(engine.getScaleDegreeForMidiNote(ionian, 48, 61), null);
 });
 
+test('limits register offset choices to valid MIDI note boundaries', () => {
+  assert.deepEqual(engine.getRegisterOffsetLimits(48), { maxBelow: 4, maxAbove: 5 });
+  assert.deepEqual(engine.getRegisterOffsetLimits(24), { maxBelow: 2, maxAbove: 5 });
+  assert.deepEqual(engine.getRegisterOffsetLimits(84), { maxBelow: 5, maxAbove: 3 });
+});
+
 test('parses manual chord progression symbols into harmonic contexts', () => {
   const result = engine.parseChordProgression('Dm9 G13 Cmaj9 A7alt nope', engine.SCALES[0], 48);
 
@@ -231,6 +237,76 @@ test('Harmony Off passes through every raw voice without suppression or remappin
   assert.deepEqual(result.notesByVoice, Object.fromEntries(rawVoices.map((voice) => [voice.voice, voice.midiNote])));
 });
 
+test('register constraint octave-folds Harmony Off into a base-relative window', () => {
+  const rawVoices = [
+    rawVoice('r', 24, -14),
+    rawVoice('g', 35, -8),
+    rawVoice('b', 36, -7),
+    rawVoice('h', 47, -1),
+    rawVoice('s', 60, 7),
+    rawVoice('v', 72, 14),
+  ];
+  const result = engine.resolveHarmony(
+    rawVoices,
+    { modelId: 'off', gravity: 1, density: 1 },
+    { scale: engine.SCALES[0], baseMidiNote: 48 },
+    undefined,
+    { strategyId: 'smooth', minMidiNote: 36, maxMidiNote: 60, maxOctaveShift: 24 },
+  );
+
+  assert.deepEqual(result.notesByVoice, { r: 36, g: 47, b: 36, h: 47, s: 60, v: 60 });
+  result.voices.forEach((voice, index) => {
+    assert.equal(voice.outputMidiNote % 12, rawVoices[index].midiNote % 12);
+    assert.ok(voice.outputMidiNote >= 36 && voice.outputMidiNote <= 60);
+  });
+  assert.equal(result.voices[0].voicingAction, 'range-shift');
+  assert.equal(result.voices[2].voicingAction, undefined);
+});
+
+test('color harmony results apply the register constraint without changing raw color mapping', () => {
+  const result = engine.getHarmonyResultForColor(
+    voiceStubs(),
+    engine.SCALES[0],
+    defaultVoiceMapping(),
+    48,
+    { modelId: 'off', gravity: 0, density: 1 },
+    0,
+    128,
+    255,
+    { h: 180, s: 0.5, v: 0.25 },
+    undefined,
+    undefined,
+    { strategyId: 'smooth', minMidiNote: 36, maxMidiNote: 60, maxOctaveShift: 24 },
+  );
+
+  assert.equal(result.rawVoices.find((voice) => voice.voice === 'b').midiNote, 84);
+  assert.equal(result.notesByVoice.b, 60);
+  assert.ok(Object.values(result.notesByVoice).filter((note) => note !== null).every((note) => note >= 36 && note <= 60));
+});
+
+test('register constraint keeps every manual harmony model inside the authored chord and hard range', () => {
+  const manualChord = engine.createManualHarmonyChord(
+    { rootPitchClass: 0, pitchClasses: [0, 4, 7], label: 'C' },
+    engine.SCALES[0],
+    48,
+  );
+
+  engine.HARMONY_MODELS.forEach((model) => {
+    const result = engine.resolveHarmony(
+      [rawVoice('r', 84, 21), rawVoice('g', 88, 23), rawVoice('b', 91, 25)],
+      { modelId: model.id, gravity: 1, density: 1 },
+      { scale: engine.SCALES[0], baseMidiNote: 48, manualChord },
+      { previousNotesByVoice: { r: 96, g: 100, b: 103 } },
+      { strategyId: 'smooth', minMidiNote: 36, maxMidiNote: 60, maxOctaveShift: 24 },
+    );
+    const notes = Object.values(result.notesByVoice).filter((note) => note !== null);
+
+    assert.ok(notes.length > 0);
+    assert.ok(notes.every((note) => note >= 36 && note <= 60));
+    assert.ok(notes.every((note) => [0, 4, 7].includes(note % 12)));
+  });
+});
+
 test('Lyrical at zero gravity passes through like the raw six-voice mapper', () => {
   const rawVoices = [
     rawVoice('r', 48, 0),
@@ -287,7 +363,7 @@ test('gravity progressively replaces raw notes with model suppression and remapp
   assert.ok(high.voices.some((voice) => voice.harmonyAction === 'remap'));
 });
 
-test('voice leading leaves low-gravity pass-through voices at their raw pitches', () => {
+test('register constraint folds low-gravity pass-through voices after harmony resolution', () => {
   const rawVoices = [
     rawVoice('r', 96, 28),
     rawVoice('g', 97, 29),
@@ -299,9 +375,9 @@ test('voice leading leaves low-gravity pass-through voices at their raw pitches'
     { previousNotesByVoice: { r: 60, g: 61 } },
   );
 
-  assert.equal(result.notesByVoice.r, 96);
+  assert.equal(result.notesByVoice.r, 84);
   assert.equal(result.voices[0].harmonyAction, 'pass-through');
-  assert.equal(result.voices[0].voicingAction, undefined);
+  assert.equal(result.voices[0].voicingAction, 'range-shift');
   assert.equal(result.voices[1].harmonyAction, 'suppress');
 });
 

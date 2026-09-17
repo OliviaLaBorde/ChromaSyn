@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_HARMONY_ENGINE_SETTINGS,
   DEFAULT_OCTAVE_SPAN,
+  DEFAULT_VOICING_SETTINGS,
   HARMONY_MODELS,
   SCALES,
   clamp,
@@ -23,6 +24,7 @@ import {
   getHarmonyResultForColor,
   getMidiLegatoNoteOffPlan,
   getMidiNoteTransition,
+  getRegisterOffsetLimits,
   getScaleDegreeForMidiNote,
   midiNoteToFrequency,
   midiNoteToName,
@@ -68,6 +70,9 @@ type AdsrSettings = {
 const DEFAULT_BASE_MIDI_NOTE = 48; // C3
 const DEFAULT_MIDI_VELOCITY = 100;
 const DEFAULT_MIDI_LEGATO_OVERLAP_MS = 35;
+const DEFAULT_OCTAVES_BELOW = 1;
+const DEFAULT_OCTAVES_ABOVE = 3;
+const MAX_REGISTER_OCTAVE_OFFSET = 5;
 const DEFAULT_PLAY_IMAGE_URL = `${import.meta.env.BASE_URL}chromasyn.svg?v=3`;
 const MELODIC_OSC_GAIN = 0.2;
 const PEDAL_OSC_GAIN = 0.16;
@@ -219,6 +224,8 @@ export default function App() {
   const [pendingPreset, setPendingPreset] = useState<typeof PRESETS[0] | null>(null);
   const [disableWebAudioWithMidi, setDisableWebAudioWithMidi] = useState(true);
   const [baseMidiNote, setBaseMidiNote] = useState(DEFAULT_BASE_MIDI_NOTE);
+  const [octavesBelow, setOctavesBelow] = useState(DEFAULT_OCTAVES_BELOW);
+  const [octavesAbove, setOctavesAbove] = useState(DEFAULT_OCTAVES_ABOVE);
   const [midiVelocity, setMidiVelocity] = useState(DEFAULT_MIDI_VELOCITY);
   const [isMidiLegatoEnabled, setIsMidiLegatoEnabled] = useState(false);
   const [midiLegatoOverlapMs, setMidiLegatoOverlapMs] = useState(DEFAULT_MIDI_LEGATO_OVERLAP_MS);
@@ -316,11 +323,24 @@ export default function App() {
     }),
     [harmonyGravity, harmonyModelId, selectedHarmonyModel.defaultDensity],
   );
+  const { maxBelow: maxOctavesBelow, maxAbove: maxOctavesAbove } = getRegisterOffsetLimits(
+    baseMidiNote,
+    MAX_REGISTER_OCTAVE_OFFSET,
+  );
+  const effectiveOctavesBelow = Math.min(octavesBelow, maxOctavesBelow);
+  const effectiveOctavesAbove = Math.min(octavesAbove, maxOctavesAbove);
+  const registerMinMidiNote = baseMidiNote - effectiveOctavesBelow * 12;
+  const registerMaxMidiNote = baseMidiNote + effectiveOctavesAbove * 12;
+  const voicingSettings = useMemo(
+    () => ({
+      ...DEFAULT_VOICING_SETTINGS,
+      minMidiNote: registerMinMidiNote,
+      maxMidiNote: registerMaxMidiNote,
+    }),
+    [registerMaxMidiNote, registerMinMidiNote],
+  );
+  const registerRangeLabel = `${midiNoteToName(registerMinMidiNote)}–${midiNoteToName(registerMaxMidiNote)}`;
   const activeProgressionChord = manualProgression.find((chord) => chord.id === activeManualChordId) ?? null;
-  const activeManualChordSignature = activeProgressionChord
-    ? `${activeProgressionChord.id}:${activeProgressionChord.rootPitchClass}:${activeProgressionChord.pitchClasses.join(',')}`
-    : '';
-  const previousActiveManualChordSignatureRef = useRef(activeManualChordSignature);
   const activeManualChord = useMemo(
     () => harmonySourceMode === 'manual-progression' && activeProgressionChord
       ? createManualHarmonyChord(activeProgressionChord, currentScale, baseMidiNote)
@@ -349,6 +369,11 @@ export default function App() {
   const resetManualProgression = useCallback(() => {
     setActiveManualChordId(manualProgression[0]?.id ?? null);
   }, [manualProgression]);
+
+  useEffect(() => {
+    if (octavesBelow > maxOctavesBelow) setOctavesBelow(maxOctavesBelow);
+    if (octavesAbove > maxOctavesAbove) setOctavesAbove(maxOctavesAbove);
+  }, [maxOctavesAbove, maxOctavesBelow, octavesAbove, octavesBelow]);
 
   useEffect(() => {
     if (manualProgression.length === 0) {
@@ -787,9 +812,10 @@ export default function App() {
         hsb,
         activeManualChord ? { manualChord: activeManualChord } : undefined,
         voicingContext,
+        voicingSettings,
       );
     },
-    [activeManualChord, baseMidiNote, currentScale, harmonySettings, voiceMappingConfig],
+    [activeManualChord, baseMidiNote, currentScale, harmonySettings, voiceMappingConfig, voicingSettings],
   );
 
   const getPedalMidiNote = useCallback(
@@ -1141,10 +1167,10 @@ export default function App() {
     }
   }, [arpIndex, enabledVoiceIds, gateOffVoice, gateOnVoice, isArpEnabled, isMouseDown, isPedalToneEnabled, shouldFreezeArp, voiceMappingConfig]);
 
-  // Revoice while the pointer is actively performing. Hover-only preview changes
-  // must never alter a chord latched by the Space sustain gesture.
+  // Revoice the sounding pixel when explicit musical controls change during
+  // active play or sustain. Hover preview state is intentionally not a dependency.
   useEffect(() => {
-    if (!isMouseDown || !latestHarmonyResultRef.current || !soundingColorRef.current) return;
+    if ((!isMouseDown && !isSustainLatched) || !latestHarmonyResultRef.current || !soundingColorRef.current) return;
     const { r, g, b, hsb } = soundingColorRef.current;
     const harmonyResult = getCurrentHarmonyResult(r, g, b, hsb, {
       previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
@@ -1152,30 +1178,7 @@ export default function App() {
     latestHarmonyResultRef.current = harmonyResult;
     updateFrequencies(harmonyResult, r, g, b);
     applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
-  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, pedalOctaveMultiplier, updateFrequencies, voiceMappingConfig]);
-
-  // Progression navigation is an intentional harmonic change, so Q/W/E and card
-  // selection can still revoice the held pixel without letting hover movement do so.
-  useEffect(() => {
-    const previousSignature = previousActiveManualChordSignatureRef.current;
-    previousActiveManualChordSignatureRef.current = activeManualChordSignature;
-    if (
-      previousSignature === activeManualChordSignature ||
-      harmonySourceMode !== 'manual-progression' ||
-      !isSustainLatched ||
-      isMouseDown ||
-      !latestHarmonyResultRef.current ||
-      !soundingColorRef.current
-    ) return;
-
-    const { r, g, b, hsb } = soundingColorRef.current;
-    const harmonyResult = getCurrentHarmonyResult(r, g, b, hsb, {
-      previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
-    });
-    latestHarmonyResultRef.current = harmonyResult;
-    updateFrequencies(harmonyResult, r, g, b);
-    applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
-  }, [activeManualChordSignature, applyMidiNotes, getCurrentHarmonyResult, getPedalMidiNote, harmonySourceMode, isMouseDown, isSustainLatched, updateFrequencies]);
+  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, isSustainLatched, pedalOctaveMultiplier, updateFrequencies, voiceMappingConfig]);
 
   const sampleColor = useCallback(
     (x: number, y: number, emitMidi: boolean) => {
@@ -1562,6 +1565,13 @@ export default function App() {
       <main className="instrument-workspace">
         <section className="musical-toolbar" aria-label="Musical controls">
           <label className="musical-field"><span>Base note</span><select value={baseMidiNote} onChange={(e) => setBaseMidiNote(Number(e.target.value))}>{BASE_NOTE_OPTIONS.map((option) => <option key={option.midiNote} value={option.midiNote}>{option.label}</option>)}</select></label>
+          <div className="musical-field register-field">
+            <span>Register <b>{registerRangeLabel}</b></span>
+            <div className="register-selects">
+              <label title="Octaves below the base note"><span>↓</span><select aria-label="Octaves below base note" value={effectiveOctavesBelow} onChange={(e) => setOctavesBelow(Number(e.target.value))}>{Array.from({ length: maxOctavesBelow + 1 }, (_, value) => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label title="Octaves above the base note"><span>↑</span><select aria-label="Octaves above base note" value={effectiveOctavesAbove} onChange={(e) => setOctavesAbove(Number(e.target.value))}>{Array.from({ length: maxOctavesAbove }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+            </div>
+          </div>
           <label className="musical-field"><span>Scale / mode</span><select value={currentScale.name} onChange={(e) => { const scale = SCALES.find((entry) => entry.name === e.target.value); if (scale) setCurrentScale(scale); }}>{SCALES.map((scale) => <option key={scale.name}>{scale.name}</option>)}</select></label>
           <label className="musical-field"><span>Harmony source</span><select value={harmonySourceMode} onChange={(e) => handleHarmonySourceChange(e.target.value as HarmonySourceId)}><option value="image">Image-derived</option><option value="manual-progression">Manual Progression</option></select></label>
           <label className="musical-field"><span>Harmony model</span><select value={harmonyModelId} onChange={(e) => setHarmonyModelId(e.target.value as HarmonyModelId)}>{HARMONY_MODELS.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
