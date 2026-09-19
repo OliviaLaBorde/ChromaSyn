@@ -9,7 +9,6 @@ Last reviewed: 2026-09-13
 - [ ] Ear-test and tune voice leading and register management across gradients, hard edges, low registers, and varied source images.
 - [ ] Performance-test Manual Progression transitions, including sustained chord changes, card reordering, editing, and MIDI legato output.
 - [ ] Add keyboard-accessible progression-card reordering and verify the full chord workflow without a mouse.
-- [ ] Improve harmony visibility by showing the inferred anchor and per-voice harmonic roles in the live display.
 - [ ] Revisit anchor inference so correlated HSB voices do not unintentionally overpower RGB evidence.
 - [ ] Evaluate whether Density should become a separate user control now that Gravity responds progressively.
 
@@ -46,4 +45,3 @@ Last reviewed: 2026-09-13
 ## Harmony extensibility
 
 - [ ] Support custom JSON harmony models with schema versioning, validation, useful errors, safe fallback, duplicate handling, reload behavior, and authoring examples.
-

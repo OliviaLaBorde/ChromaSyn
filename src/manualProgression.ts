@@ -17,12 +17,14 @@ export type ManualProgressionSession = {
   chords: ProgressionChord[];
   activeChordId: string | null;
   harmonySource: HarmonySourceId;
+  revoiceOnChordChange: boolean;
 };
 
 const EMPTY_SESSION: ManualProgressionSession = {
   chords: [],
   activeChordId: null,
   harmonySource: 'image',
+  revoiceOnChordChange: false,
 };
 
 export const createProgressionChordId = () => {
@@ -80,7 +82,13 @@ export const loadManualProgressionSession = (): ManualProgressionSession => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return EMPTY_SESSION;
-    const parsed = JSON.parse(raw) as { schemaVersion?: unknown; chords?: unknown; activeChordId?: unknown; harmonySource?: unknown };
+    const parsed = JSON.parse(raw) as {
+      schemaVersion?: unknown;
+      chords?: unknown;
+      activeChordId?: unknown;
+      harmonySource?: unknown;
+      revoiceOnChordChange?: unknown;
+    };
     if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.chords)) return EMPTY_SESSION;
     const chords = parsed.chords
       .map(normalizeStoredChord)
@@ -91,6 +99,7 @@ export const loadManualProgressionSession = (): ManualProgressionSession => {
       chords,
       activeChordId: chords.some((chord) => chord.id === requestedActiveId) ? requestedActiveId : (chords[0]?.id ?? null),
       harmonySource: parsed.harmonySource === 'manual-progression' ? 'manual-progression' : 'image',
+      revoiceOnChordChange: parsed.revoiceOnChordChange === true,
     };
   } catch {
     return EMPTY_SESSION;

@@ -52,6 +52,9 @@
 .progression-strip-heading, .progression-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .progression-strip-heading { padding: 0 2px 10px; }
 .progression-strip-heading p { margin-top: 3px; color: #918a99; font-size: 11px; }
+.progression-strip-actions { display: flex; align-items: center; gap: 12px; }
+.progression-revoice { display: inline-flex; align-items: center; gap: 7px; color: #aaa2b0; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.progression-revoice input { width: 14px; height: 14px; accent-color: #e8a0c3; cursor: pointer; }
 .progression-empty { padding: 14px 16px; }
 .progression-empty strong { display: block; margin-top: 5px; color: #d5ced9; font-size: 13px; font-weight: 500; }
 .progression-card-track { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 7px; scrollbar-color: #ffffff28 transparent; }
@@ -74,6 +77,8 @@
 .stage-footer { margin-top: 9px; font-size: 9px; letter-spacing: .8px; }
 .voice-monitor { margin-top: 16px; border: 1px solid #ffffff14; background: #131318; border-radius: 10px; overflow: hidden; }
 .monitor-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; color: #9b93a3; font-size: 11px; }
+.monitor-context { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.monitor-context strong { color: #74d9d4; font-family: var(--font-mono); font-size: 10px; font-weight: 500; }
 .voice-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .voice-cell { --voice-color: #f18b9b; padding: 12px 16px 14px; border-top: 2px solid var(--voice-color); border-right: 1px solid #ffffff0d; background: linear-gradient(180deg, color-mix(in srgb, var(--voice-color) 5%, transparent), transparent); }
 .voice-g { --voice-color: #7ed7a1; }.voice-b { --voice-color: #81abed; }.voice-h { --voice-color: #c296ed; }.voice-s { --voice-color: #ecb784; }.voice-v { --voice-color: #e3d996; }
@@ -83,7 +88,10 @@
 .voice-pitch { display: flex; align-items: baseline; justify-content: space-between; margin-top: 10px; gap: 8px; font-family: var(--font-mono); }
 .voice-pitch strong { font-size: 23px; font-weight: 500; letter-spacing: -1px; }
 .voice-pitch > span { font-size: 10px; color: #a89fb2; }
+.voice-harmony { min-height: 20px; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 9px; }
+.voice-harmony span { padding: 2px 5px; border: 1px solid color-mix(in srgb, var(--voice-color) 25%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--voice-color) 8%, transparent); color: #b9b1bf; font-family: var(--font-mono); font-size: 9px; line-height: 1.2; }
 .voice-muted { border-top-color: #514b58; background: transparent; }.voice-muted .voice-pitch strong { color: #8f8798; font-size: 18px; }
+.voice-muted .voice-harmony { opacity: .45; }
 .monitor-footer { display: flex; align-items: center; gap: 24px; border-top: 1px solid #ffffff0d; padding: 9px 16px; color: #a39baa; font-size: 10px; }
 .monitor-footer > span:first-child { margin-right: auto; }
 .setup-area { margin-top: 20px; padding: 4px; border: 1px solid #ffffff14; background: #101014; border-radius: 10px; }
@@ -133,10 +141,11 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 @media (max-width: 760px) {
   .musical-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .voice-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .voice-monitor > .monitor-heading { align-items: flex-start; gap: 12px; }.monitor-context { max-width: 72%; }
   .monitor-footer { flex-wrap: wrap; gap: 8px 16px; }.header-actions { gap: 6px; }
   .instrument-header { padding: 0 12px; }.brand { gap: 9px; }.brand h1 { font-size: 17px; }.brand-logo-button { width: 36px; height: 36px; flex-basis: 36px; border-radius: 7px; }
   .quiet-button, .panic-button { padding: 8px; }.instrument-workspace { padding: 12px; }
-  .progression-strip-heading p { display: none; }
+  .progression-strip-heading { flex-wrap: wrap; }.progression-strip-heading p { display: none; }
   .progression-card { flex-basis: 150px; }
   .chord-modal-backdrop { align-items: flex-start; padding: 10px; }
   .chord-modal { margin-top: 8px; padding: 16px; }

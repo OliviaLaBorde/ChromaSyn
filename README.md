@@ -14,6 +14,7 @@ https://olivialaborde.github.io/ChromaSyn/
 
 - Load your own image or use built-in gradient presets
 - Hover the canvas to preview live per-voice note and scale degree data
+- See the active harmonic anchor plus each voice's role, harmony action, and octave/register movement
 - Click/drag to perform notes from sampled pixels
 - Modal scale selector (Ionian, Dorian, Phrygian, etc.)
 - Base note selector (shared by audio + MIDI mapping)
@@ -80,7 +81,7 @@ npm run build
 
 The desktop workspace keeps base note, scale, harmony source/model, and Gravity above the image. The six voice readouts below the image include their enable checkboxes. Open **Presets** to choose a gradient, or **Setup** for pedal, arpeggiator, audio/envelope/filter, and MIDI settings. **Panic** immediately silences internal audio and releases MIDI notes.
 
-Choose **Manual Progression** as the Harmony Source to build a chord path. A chord preset populates the one-octave piano, and the selected notes remain freely editable. The active card strictly defines the legal pitch classes while the image, Harmony Model, density, and voice-leading determine how the six voices move through that chord. Progressions are saved in the current browser and support up to 12 chords.
+Choose **Manual Progression** as the Harmony Source to build a chord path. A chord preset populates the one-octave piano, and the selected notes remain freely editable. The active card strictly defines the legal pitch classes while the image, Harmony Model, density, and voice-leading determine how the six voices move through that chord. Progressions and the Live Revoice preference are saved in the current browser and support up to 12 chords.
 
 - **Modal Scale**: choose the active mode
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
@@ -88,12 +89,14 @@ Choose **Manual Progression** as the Harmony Source to build a chord path. A cho
 - **Enable Pedal Tone**: adds a sustained pedal voice
 - **Pedal Octave**: pedal register (`1x` highest, `3x` lowest)
 - **Voice Toggles**: toggle Red/Green/Blue/Hue/Saturation/Brightness notes on/off
+- **Harmony Visibility**: the six-voice monitor shows the inferred image anchor or manual chord root, plus how each voice was kept, remapped, suppressed, or moved
 - **Arpeggiator**: cycles all enabled melodic voices while held
 - **Sustain Hold (`Space`)**: hold active chord/pedal while exploring; click to replace
 - **Preset Hotkeys**: `z x c v b n m , . /` load gradient presets 1-10
 - **Manual Progression Navigation**: `Q` next chord, `W` previous chord, `E` reset to chord 1; navigation wraps at either end
 - **Manual Progression Direct Select**: `1`–`9` select positions 1–9, `0` selects 10, `-` selects 11, and `=` selects 12
 - **Progression Cards**: click to select; use the card controls to preview, edit, or delete; drag cards to reorder them
+- **Live Revoice**: optional Manual Progression behavior; off by default so chord changes update the preview but sounding notes wait for the next canvas gesture, or on to reshape sounding notes immediately
 - **Oscillator Type**: sets melodic waveform
 - **ADSR Envelope**: shapes internal oscillator amplitude
 - **Master Filter**: enables low-pass/high-pass shaping with cutoff and resonance
@@ -111,7 +114,7 @@ Choose **Manual Progression** as the Harmony Source to build a chord path. A cho
 
 The detailed, canonical project backlog lives in [TODO.md](TODO.md). Planned directions include:
 
-- More harmony/voice-leading ear testing, clearer inferred-anchor and voice-role feedback, and continued Manual Progression polish
+- More harmony/voice-leading ear testing and continued Manual Progression polish
 - Mobile sustain controls, larger touch targets, and broader mobile-browser validation
 - Optional multi-pixel color averaging and assignable image-zone hotspots
 - Manual Progression extensions such as tone weights, register ranges, bass/inversion controls, and chord-catalog import/export

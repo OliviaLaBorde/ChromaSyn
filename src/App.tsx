@@ -31,16 +31,19 @@ import {
   createManualHarmonyChord,
   rgbToHsb,
   type HarmonyEngineSettings,
+  type HarmonyAction,
   type HarmonyModelId,
   type HarmonyResult,
   type HarmonySourceId,
   type HsbColor,
   type ProgressionChord,
   type Scale,
+  type ToneRole,
   type VoiceDescriptor,
   type VoiceId,
   type VoiceMappingById,
   type VoiceNoteById,
+  type VoicingAction,
   type VoicingContext,
 } from './musicEngine';
 
@@ -122,6 +125,30 @@ const PRESETS = [
 ];
 const PRESET_HOTKEYS = ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'] as const;
 const SCALE_WALKER_STEP_COUNT = 8; // Degrees 1-7, then back to 1.
+const HARMONY_ROLE_LABELS: Record<ToneRole, string> = {
+  root: 'Root',
+  third: '3rd',
+  fifth: '5th',
+  sixth: '6th',
+  seventh: '7th',
+  ninth: '9th',
+  eleventh: '11th',
+  thirteenth: '13th',
+  flatNinth: 'b9',
+  sharpNinth: '#9',
+  sharpEleventh: '#11',
+  flatThirteenth: 'b13',
+};
+const HARMONY_ACTION_LABELS: Record<HarmonyAction, string> = {
+  'pass-through': 'Raw',
+  preserve: 'Kept',
+  remap: 'Remapped',
+  suppress: 'Suppressed',
+};
+const VOICING_ACTION_LABELS: Partial<Record<VoicingAction, string>> = {
+  'octave-shift': 'Octave moved',
+  'range-shift': 'Range moved',
+};
 const getScaleWalkerColor = (stepIndex: number) => {
   const degree = (stepIndex % 7) + 1;
   const unit = 255 / 21;
@@ -178,6 +205,19 @@ const getRepeatedDegree = (degrees: number[]) => {
     degreeCounts.set(degree, (degreeCounts.get(degree) ?? 0) + 1);
   });
   return degrees.find((degree) => (degreeCounts.get(degree) ?? 0) >= 2) ?? null;
+};
+
+const getVoiceHarmonyLabels = (
+  role?: ToneRole,
+  harmonyAction?: HarmonyAction,
+  voicingAction?: VoicingAction,
+) => {
+  const labels: string[] = [];
+  if (role) labels.push(HARMONY_ROLE_LABELS[role]);
+  if (harmonyAction) labels.push(HARMONY_ACTION_LABELS[harmonyAction]);
+  const voicingLabel = voicingAction ? VOICING_ACTION_LABELS[voicingAction] : undefined;
+  if (voicingLabel) labels.push(voicingLabel);
+  return labels.length > 0 ? labels : ['Direct'];
 };
 
 const stepDegreeToward = (from: number, to: number) => {
@@ -244,6 +284,9 @@ export default function App() {
   const [harmonySourceMode, setHarmonySourceMode] = useState<HarmonySourceId>(initialProgressionSession.harmonySource);
   const [manualProgression, setManualProgression] = useState<ProgressionChord[]>(initialProgressionSession.chords);
   const [activeManualChordId, setActiveManualChordId] = useState<string | null>(initialProgressionSession.activeChordId);
+  const [revoiceOnManualChordChange, setRevoiceOnManualChordChange] = useState(
+    initialProgressionSession.revoiceOnChordChange,
+  );
   const [isChordBuilderOpen, setIsChordBuilderOpen] = useState(false);
   const [editingProgressionChord, setEditingProgressionChord] = useState<ProgressionChord | null>(null);
   const [voiceMappingConfig, setVoiceMappingConfig] = useState<VoiceMappingById>(() => getDefaultVoiceMappingConfig());
@@ -341,6 +384,10 @@ export default function App() {
   );
   const registerRangeLabel = `${midiNoteToName(registerMinMidiNote)}–${midiNoteToName(registerMaxMidiNote)}`;
   const activeProgressionChord = manualProgression.find((chord) => chord.id === activeManualChordId) ?? null;
+  const activeManualChordSignature = activeProgressionChord
+    ? `${activeProgressionChord.id}:${activeProgressionChord.rootPitchClass}:${activeProgressionChord.pitchClasses.join(',')}`
+    : '';
+  const previousActiveManualChordSignatureRef = useRef(activeManualChordSignature);
   const activeManualChord = useMemo(
     () => harmonySourceMode === 'manual-progression' && activeProgressionChord
       ? createManualHarmonyChord(activeProgressionChord, currentScale, baseMidiNote)
@@ -390,8 +437,9 @@ export default function App() {
       chords: manualProgression,
       activeChordId: activeManualChordId,
       harmonySource: harmonySourceMode,
+      revoiceOnChordChange: revoiceOnManualChordChange,
     });
-  }, [activeManualChordId, harmonySourceMode, manualProgression]);
+  }, [activeManualChordId, harmonySourceMode, manualProgression, revoiceOnManualChordChange]);
 
   // Initialize Audio
   const initAudio = useCallback(() => {
@@ -1170,7 +1218,11 @@ export default function App() {
   // Revoice the sounding pixel when explicit musical controls change during
   // active play or sustain. Hover preview state is intentionally not a dependency.
   useEffect(() => {
+    const didManualChordChange = previousActiveManualChordSignatureRef.current !== activeManualChordSignature;
+    previousActiveManualChordSignatureRef.current = activeManualChordSignature;
+
     if ((!isMouseDown && !isSustainLatched) || !latestHarmonyResultRef.current || !soundingColorRef.current) return;
+    if (didManualChordChange && harmonySourceMode === 'manual-progression' && !revoiceOnManualChordChange) return;
     const { r, g, b, hsb } = soundingColorRef.current;
     const harmonyResult = getCurrentHarmonyResult(r, g, b, hsb, {
       previousNotesByVoice: latestHarmonyResultRef.current.notesByVoice,
@@ -1178,7 +1230,7 @@ export default function App() {
     latestHarmonyResultRef.current = harmonyResult;
     updateFrequencies(harmonyResult, r, g, b);
     applyMidiNotes(harmonyResult.notesByVoice, getPedalMidiNote(r, g, b, false));
-  }, [applyMidiNotes, arpIndex, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, isArpEnabled, isMouseDown, isSustainLatched, pedalOctaveMultiplier, updateFrequencies, voiceMappingConfig]);
+  }, [activeManualChordSignature, applyMidiNotes, arpIndex, enabledVoiceIds, getCurrentHarmonyResult, getPedalMidiNote, harmonySourceMode, isArpEnabled, isMouseDown, isSustainLatched, pedalOctaveMultiplier, revoiceOnManualChordChange, updateFrequencies, voiceMappingConfig]);
 
   const sampleColor = useCallback(
     (x: number, y: number, emitMidi: boolean) => {
@@ -1471,23 +1523,25 @@ export default function App() {
     }));
   }, []);
 
-  const liveVoiceRows = useMemo(() => {
+  const liveHarmonyResult = useMemo(() => {
     const heldHarmonyResult = latestHarmonyResultRef.current;
-    const harmonyResult =
-      isMouseDown && !isSustainLatched && heldHarmonyResult
-        ? heldHarmonyResult
-        : getCurrentHarmonyResult(
-            currentRGB.r,
-            currentRGB.g,
-            currentRGB.b,
-            currentHSB,
-            isSustainLatched && heldHarmonyResult
-              ? { previousNotesByVoice: heldHarmonyResult.notesByVoice }
-              : undefined,
-          );
-    return MELODIC_VOICES.map((voice) => {
+    return isMouseDown && !isSustainLatched && heldHarmonyResult
+      ? heldHarmonyResult
+      : getCurrentHarmonyResult(
+          currentRGB.r,
+          currentRGB.g,
+          currentRGB.b,
+          currentHSB,
+          isSustainLatched && heldHarmonyResult
+            ? { previousNotesByVoice: heldHarmonyResult.notesByVoice }
+            : undefined,
+        );
+  }, [currentHSB, currentRGB, getCurrentHarmonyResult, isMouseDown, isSustainLatched]);
+
+  const liveVoiceRows = useMemo(
+    () => MELODIC_VOICES.map((voice) => {
       const config = voiceMappingConfig[voice.id];
-      const voiceResult = harmonyResult.voices.find((entry) => entry.voice === voice.id);
+      const voiceResult = liveHarmonyResult.voices.find((entry) => entry.voice === voice.id);
       const outputMidiNote = voiceResult?.outputMidiNote ?? null;
       return {
         id: voice.id,
@@ -1496,9 +1550,23 @@ export default function App() {
         enabled: config.enabled,
         degreeLabel: outputMidiNote === null ? '-' : (getScaleDegreeForMidiNote(currentScale, baseMidiNote, outputMidiNote)?.toString() ?? '-'),
         noteName: outputMidiNote === null ? 'Rest' : midiNoteToName(outputMidiNote),
+        harmonyLabels: getVoiceHarmonyLabels(
+          voiceResult?.harmonyRole,
+          voiceResult?.harmonyAction,
+          voiceResult?.voicingAction,
+        ),
       };
-    });
-  }, [baseMidiNote, currentHSB, currentRGB, currentScale, getCurrentHarmonyResult, isMouseDown, isSustainLatched, voiceMappingConfig]);
+    }),
+    [baseMidiNote, currentScale, liveHarmonyResult.voices, voiceMappingConfig],
+  );
+  const liveAnchor = liveHarmonyResult.anchor;
+  const liveAnchorLabel = liveAnchor
+    ? `${liveAnchor.source === 'manual-progression' ? 'Root' : 'Anchor'} ${midiNoteToName(liveAnchor.midiNote)} · Deg ${liveAnchor.scaleDegree} · ${liveAnchor.source === 'manual-progression' ? 'Manual chord' : 'Image inferred'}`
+    : harmonySourceMode === 'manual-progression' && !activeProgressionChord
+      ? 'No active chord'
+      : harmonyModelId === 'off'
+        ? 'Anchor bypassed'
+        : 'No active anchor';
 
   const togglePanel = useCallback((panelId: ControlPanelId) => {
     setOpenPanels((prev) => ({
@@ -1615,12 +1683,14 @@ export default function App() {
               chords={manualProgression}
               activeChordId={activeManualChordId}
               maxChords={MAX_PROGRESSION_CHORDS}
+              revoiceOnChordChange={revoiceOnManualChordChange}
               onAdd={() => openChordBuilder()}
               onSelect={setActiveManualChordId}
               onEdit={openChordBuilder}
               onDelete={deleteProgressionChord}
               onPreview={previewChord}
               onReorder={(draggedId, targetId) => setManualProgression((current) => reorderProgression(current, draggedId, targetId))}
+              onRevoiceOnChordChange={setRevoiceOnManualChordChange}
             />
           ) : (
             <section className="progression-empty" aria-label="Create a manual chord progression">
@@ -1668,30 +1738,6 @@ export default function App() {
                   </div>
                 </motion.div>
 
-                {/* Floating Info Overlay */}
-                <AnimatePresence>
-                  {isMouseDown && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-4 text-xs font-mono pointer-events-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-red-500" />
-                        <span>{currentRGB.r}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500" />
-                        <span>{currentRGB.g}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-blue-500" />
-                        <span>{currentRGB.b}</span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
             )}
           </div>
@@ -1707,11 +1753,12 @@ export default function App() {
           </div>
 
         <section className="voice-monitor" aria-label="Live voices">
-          <div className="monitor-heading"><span className="eyebrow">SIX VOICES</span><span>{isSustainLatched ? 'Preview · held chord sounding' : isMouseDown ? 'Output · playing' : 'Preview · hover the image'}</span></div>
+          <div className="monitor-heading"><span className="eyebrow">SIX VOICES</span><div className="monitor-context"><span>{isSustainLatched ? 'Preview · held chord sounding' : isMouseDown ? 'Output · playing' : 'Preview · hover the image'}</span><strong>{liveAnchorLabel}</strong></div></div>
           <div className="voice-strip">{liveVoiceRows.map((voice) => (
             <div key={voice.id} className={`voice-cell voice-${voice.id} ${voice.enabled ? '' : 'voice-muted'}`}>
               <label className="voice-label"><span><i />{voice.label}</span><input type="checkbox" aria-label={`Enable ${voice.label} voice`} checked={voice.enabled} onChange={(e) => setVoiceEnabled(voice.id, e.target.checked)} /></label>
               <div className="voice-pitch"><strong>{voice.enabled ? voice.noteName : 'Muted'}</strong><span>Deg {voice.enabled ? voice.degreeLabel : '—'}</span></div>
+              <div className="voice-harmony" aria-label={`${voice.label} harmony: ${voice.harmonyLabels.join(', ')}`}>{voice.harmonyLabels.map((label) => <span key={label}>{label}</span>)}</div>
             </div>
           ))}</div>
           <div className="monitor-footer"><span>{harmonySourceMode === 'manual-progression' ? `${activeProgressionChord?.label ?? 'No chord'} · ${selectedHarmonyModel.name}` : harmonyModelId === 'off' ? 'Harmony off · original color mapping' : `${selectedHarmonyModel.name} · ${Math.round(harmonyGravity * 100)}% gravity`}</span><span>Pedal {isPedalToneEnabled && previewPedalNoteName ? `${previewPedalNoteName} · ${pedalPersonality}` : 'off'}</span><span>Arpeggiator {isArpEnabled ? `${arpSpeed} ms` : 'off'}</span></div>
@@ -2130,6 +2177,7 @@ export default function App() {
                     <li>Use the cards above the image to select, preview, edit, delete, or drag chords into a new order.</li>
                     <li>While performing, press <span className="font-mono">Q</span> for next, <span className="font-mono">W</span> for previous, or <span className="font-mono">E</span> to reset to chord 1.</li>
                     <li>Use <span className="font-mono">1–9, 0, -, =</span> to select chord positions 1–12 directly.</li>
+                    <li>Enable <span className="font-medium">Live revoice</span> to reshape sounding notes immediately when the active chord changes. Leave it off to apply the chord on your next canvas gesture.</li>
                   </ol>
                   <p>The active chord defines the legal notes; the image and Harmony Model decide how the six voices move through them.</p>
                 </section>
