@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "chords": [
+    { "id": "starter-cmaj9", "rootPitchClass": 0, "presetId": "major9" },
+    { "id": "starter-em9", "rootPitchClass": 4, "presetId": "minor9" },
+    { "id": "starter-a13", "rootPitchClass": 9, "presetId": "dominant13" },
+    { "id": "starter-dm9", "rootPitchClass": 2, "presetId": "minor9" },
+    { "id": "starter-fmaj7-sharp11", "rootPitchClass": 5, "presetId": "major7Sharp11" },
+    { "id": "starter-fm6", "rootPitchClass": 5, "presetId": "minor6" },
+    { "id": "starter-c69", "rootPitchClass": 0, "presetId": "six9" },
+    { "id": "starter-g13", "rootPitchClass": 7, "presetId": "dominant13" }
+  ]
+}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GripVertical, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { GripVertical, Pencil, Play, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { PITCH_CLASS_NAMES, type ProgressionChord } from '../musicEngine';
 
 type ProgressionStripProps = {
@@ -13,6 +13,7 @@ type ProgressionStripProps = {
   onDelete: (id: string) => void;
   onPreview: (pitchClasses: number[]) => void;
   onReorder: (draggedId: string, targetId: string) => void;
+  onReset: () => void;
   onRevoiceOnChordChange: (enabled: boolean) => void;
 };
 
@@ -29,6 +30,7 @@ export function ProgressionStrip({
   onDelete,
   onPreview,
   onReorder,
+  onReset,
   onRevoiceOnChordChange,
 }: ProgressionStripProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -46,6 +48,16 @@ export function ProgressionStrip({
             />
             <span>Live revoice</span>
           </label>
+          <button
+            type="button"
+            className="quiet-button progression-reset-button"
+            title="Restore the starter progression"
+            onClick={() => {
+              if (window.confirm('Replace the current progression with the ChromaSyn starter progression?')) onReset();
+            }}
+          >
+            <RotateCcw size={13} />Reset
+          </button>
           <button type="button" className="quiet-button" disabled={chords.length >= maxChords} onClick={onAdd}><Plus size={14} />Add chord</button>
         </div>
       </div>

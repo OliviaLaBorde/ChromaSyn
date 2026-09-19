@@ -55,8 +55,10 @@
 .progression-strip-actions { display: flex; align-items: center; gap: 12px; }
 .progression-revoice { display: inline-flex; align-items: center; gap: 7px; color: #aaa2b0; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .progression-revoice input { width: 14px; height: 14px; accent-color: #e8a0c3; cursor: pointer; }
+.progression-reset-button { padding: 7px 9px; }
 .progression-empty { padding: 14px 16px; }
 .progression-empty strong { display: block; margin-top: 5px; color: #d5ced9; font-size: 13px; font-weight: 500; }
+.progression-empty-actions { display: flex; align-items: center; gap: 8px; }
 .progression-card-track { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 7px; scrollbar-color: #ffffff28 transparent; }
 .progression-card { position: relative; flex: 0 0 164px; overflow: hidden; border: 1px solid #ffffff14; border-radius: 8px; background: #1a1921; transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease, transform 120ms ease; }
 .progression-card:hover { border-color: #ffffff32; }

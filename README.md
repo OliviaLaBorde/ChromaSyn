@@ -81,7 +81,7 @@ npm run build
 
 The desktop workspace keeps base note, scale, harmony source/model, and Gravity above the image. The six voice readouts below the image include their enable checkboxes. Open **Presets** to choose a gradient, or **Setup** for pedal, arpeggiator, audio/envelope/filter, and MIDI settings. **Panic** immediately silences internal audio and releases MIDI notes.
 
-Choose **Manual Progression** as the Harmony Source to build a chord path. A chord preset populates the one-octave piano, and the selected notes remain freely editable. The active card strictly defines the legal pitch classes while the image, Harmony Model, density, and voice-leading determine how the six voices move through that chord. Progressions and the Live Revoice preference are saved in the current browser and support up to 12 chords.
+Choose **Manual Progression** as the Harmony Source to build a chord path. New browser sessions begin with a lyrical eight-chord progression—`Cmaj9 → Em9 → A13 → Dm9 → Fmaj7♯11 → Fm6 → C6/9 → G13`—which can be edited or replaced like any other progression. A chord preset populates the one-octave piano, and the selected notes remain freely editable. The active card strictly defines the legal pitch classes while the image, Harmony Model, density, and voice-leading determine how the six voices move through that chord. Progressions and the Live Revoice preference are saved in the current browser and support up to 12 chords.
 
 - **Modal Scale**: choose the active mode
 - **Base Note (Freq + MIDI)**: shifts pitch center for both engines
@@ -97,6 +97,7 @@ Choose **Manual Progression** as the Harmony Source to build a chord path. A cho
 - **Manual Progression Direct Select**: `1`–`9` select positions 1–9, `0` selects 10, `-` selects 11, and `=` selects 12
 - **Progression Cards**: click to select; use the card controls to preview, edit, or delete; drag cards to reorder them
 - **Live Revoice**: optional Manual Progression behavior; off by default so chord changes update the preview but sounding notes wait for the next canvas gesture, or on to reshape sounding notes immediately
+- **Reset Progression**: replaces the current chord path with the shipped eight-chord starter after confirmation
 - **Oscillator Type**: sets melodic waveform
 - **ADSR Envelope**: shapes internal oscillator amplitude
 - **Master Filter**: enables low-pass/high-pass shaping with cutoff and resonance

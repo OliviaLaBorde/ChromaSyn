@@ -1,4 +1,5 @@
 import chordCatalog from './data/chords.json';
+import defaultProgression from './data/defaultProgression.json';
 import {
   PITCH_CLASS_NAMES,
   getChordPitchClasses,
@@ -12,6 +13,7 @@ export const MAX_PROGRESSION_CHORDS = 12;
 export const CHORD_DEFINITIONS: ChordDefinition[] = validateChordCatalog(chordCatalog);
 
 const STORAGE_KEY = 'chromasyn.manual-progression.v1';
+const STORAGE_SCHEMA_VERSION = 2;
 
 export type ManualProgressionSession = {
   chords: ProgressionChord[];
@@ -20,11 +22,10 @@ export type ManualProgressionSession = {
   revoiceOnChordChange: boolean;
 };
 
-const EMPTY_SESSION: ManualProgressionSession = {
-  chords: [],
-  activeChordId: null,
-  harmonySource: 'image',
-  revoiceOnChordChange: false,
+type DefaultProgressionSeed = {
+  id: string;
+  rootPitchClass: number;
+  presetId: string;
 };
 
 export const createProgressionChordId = () => {
@@ -42,6 +43,43 @@ export const createProgressionChordFromPreset = (
     pitchClasses: getChordPitchClasses(normalizedRoot, definition.intervals),
     label: `${PITCH_CLASS_NAMES[normalizedRoot]}${definition.symbol}`,
     sourcePresetId: definition.id,
+  };
+};
+
+export const createDefaultManualProgression = (): ProgressionChord[] => {
+  if (defaultProgression.schemaVersion !== 1 || !Array.isArray(defaultProgression.chords)) {
+    throw new Error('Default progression has an unsupported schema.');
+  }
+
+  const usedIds = new Set<string>();
+  return (defaultProgression.chords as DefaultProgressionSeed[]).map((seed) => {
+    if (!seed.id?.trim() || usedIds.has(seed.id)) {
+      throw new Error(`Default progression contains an invalid or duplicate chord ID: ${seed.id}`);
+    }
+    if (!Number.isInteger(seed.rootPitchClass) || seed.rootPitchClass < 0 || seed.rootPitchClass > 11) {
+      throw new Error(`Default progression chord ${seed.id} has an invalid root pitch class.`);
+    }
+
+    const definition = CHORD_DEFINITIONS.find((candidate) => candidate.id === seed.presetId);
+    if (!definition) {
+      throw new Error(`Default progression chord ${seed.id} references missing preset ${seed.presetId}.`);
+    }
+
+    usedIds.add(seed.id);
+    return {
+      id: seed.id,
+      ...createProgressionChordFromPreset(seed.rootPitchClass, definition),
+    };
+  });
+};
+
+const createDefaultSession = (): ManualProgressionSession => {
+  const chords = createDefaultManualProgression();
+  return {
+    chords,
+    activeChordId: chords[0]?.id ?? null,
+    harmonySource: 'image',
+    revoiceOnChordChange: false,
   };
 };
 
@@ -78,10 +116,10 @@ const normalizeStoredChord = (value: unknown): ProgressionChord | null => {
 };
 
 export const loadManualProgressionSession = (): ManualProgressionSession => {
-  if (typeof window === 'undefined') return EMPTY_SESSION;
+  if (typeof window === 'undefined') return createDefaultSession();
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return EMPTY_SESSION;
+    if (!raw) return createDefaultSession();
     const parsed = JSON.parse(raw) as {
       schemaVersion?: unknown;
       chords?: unknown;
@@ -89,11 +127,16 @@ export const loadManualProgressionSession = (): ManualProgressionSession => {
       harmonySource?: unknown;
       revoiceOnChordChange?: unknown;
     };
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.chords)) return EMPTY_SESSION;
-    const chords = parsed.chords
+    if ((parsed.schemaVersion !== 1 && parsed.schemaVersion !== STORAGE_SCHEMA_VERSION) || !Array.isArray(parsed.chords)) {
+      return createDefaultSession();
+    }
+    const storedChords = parsed.chords
       .map(normalizeStoredChord)
       .filter((chord): chord is ProgressionChord => chord !== null)
       .slice(0, MAX_PROGRESSION_CHORDS);
+    const chords = parsed.schemaVersion === 1 && storedChords.length === 0
+      ? createDefaultManualProgression()
+      : storedChords;
     const requestedActiveId = typeof parsed.activeChordId === 'string' ? parsed.activeChordId : null;
     return {
       chords,
@@ -102,14 +145,14 @@ export const loadManualProgressionSession = (): ManualProgressionSession => {
       revoiceOnChordChange: parsed.revoiceOnChordChange === true,
     };
   } catch {
-    return EMPTY_SESSION;
+    return createDefaultSession();
   }
 };
 
 export const saveManualProgressionSession = (session: ManualProgressionSession) => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ schemaVersion: 1, ...session }));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ schemaVersion: STORAGE_SCHEMA_VERSION, ...session }));
   } catch {
     // The progression still works in-memory when storage is unavailable.
   }

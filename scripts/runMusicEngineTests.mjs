@@ -5,6 +5,7 @@ import ts from 'typescript';
 const sourceUrl = new URL('../src/musicEngine.ts', import.meta.url);
 const source = fs.readFileSync(sourceUrl, 'utf8');
 const chordCatalog = JSON.parse(fs.readFileSync(new URL('../src/data/chords.json', import.meta.url), 'utf8'));
+const defaultProgression = JSON.parse(fs.readFileSync(new URL('../src/data/defaultProgression.json', import.meta.url), 'utf8'));
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -110,6 +111,36 @@ test('validates the external chord catalog and generates arbitrary-root pitch cl
     ] }),
     /duplicate pitch classes/i,
   );
+});
+
+test('resolves the lyrical starter progression through the validated chord catalog', () => {
+  const definitions = engine.validateChordCatalog(chordCatalog);
+  const chords = defaultProgression.chords.map((seed) => {
+    const definition = definitions.find((candidate) => candidate.id === seed.presetId);
+    assert.ok(definition, `Missing starter chord preset: ${seed.presetId}`);
+    return {
+      id: seed.id,
+      rootPitchClass: seed.rootPitchClass,
+      label: `${engine.PITCH_CLASS_NAMES[seed.rootPitchClass]}${definition.symbol}`,
+      pitchClasses: engine.getChordPitchClasses(seed.rootPitchClass, definition.intervals),
+    };
+  });
+
+  assert.equal(defaultProgression.schemaVersion, 1);
+  assert.equal(new Set(chords.map((chord) => chord.id)).size, chords.length);
+  assert.deepEqual(chords.map((chord) => chord.label), [
+    'Cmaj9', 'Em9', 'A13', 'Dm9', 'Fmaj7#11', 'Fm6', 'C6/9', 'G13',
+  ]);
+  assert.deepEqual(chords.map((chord) => chord.pitchClasses), [
+    [0, 4, 7, 11, 2],
+    [4, 7, 11, 2, 6],
+    [9, 1, 4, 7, 11, 6],
+    [2, 5, 9, 0, 4],
+    [5, 9, 0, 4, 11],
+    [5, 8, 0, 2],
+    [0, 4, 7, 9, 2],
+    [7, 11, 2, 5, 9, 4],
+  ]);
 });
 
 test('manual progression chords keep every model inside the authored pitch-class boundary', () => {

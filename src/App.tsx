@@ -7,6 +7,7 @@ import { ProgressionStrip } from './components/ProgressionStrip';
 import {
   CHORD_DEFINITIONS,
   MAX_PROGRESSION_CHORDS,
+  createDefaultManualProgression,
   createProgressionChordId,
   getProgressionHotkeyIndex,
   loadManualProgressionSession,
@@ -615,6 +616,13 @@ export default function App() {
       return next;
     });
   }, [activeManualChordId]);
+
+  const restoreDefaultProgression = useCallback(() => {
+    const chords = createDefaultManualProgression();
+    setManualProgression(chords);
+    setActiveManualChordId(chords[0]?.id ?? null);
+    showToast('Starter progression restored.');
+  }, [showToast]);
 
   const handleHarmonySourceChange = useCallback((source: HarmonySourceId) => {
     setHarmonySourceMode(source);
@@ -1690,12 +1698,16 @@ export default function App() {
               onDelete={deleteProgressionChord}
               onPreview={previewChord}
               onReorder={(draggedId, targetId) => setManualProgression((current) => reorderProgression(current, draggedId, targetId))}
+              onReset={restoreDefaultProgression}
               onRevoiceOnChordChange={setRevoiceOnManualChordChange}
             />
           ) : (
             <section className="progression-empty" aria-label="Create a manual chord progression">
               <div><span className="eyebrow">CHORD PATH</span><strong>Build a progression to define the image’s harmonic world.</strong></div>
-              <button type="button" className="primary-button" onClick={() => openChordBuilder()}>Build first chord</button>
+              <div className="progression-empty-actions">
+                <button type="button" className="quiet-button" onClick={restoreDefaultProgression}>Restore starter</button>
+                <button type="button" className="primary-button" onClick={() => openChordBuilder()}>Build first chord</button>
+              </div>
             </section>
           ))}
           <div className="image-stage">
@@ -2178,6 +2190,7 @@ export default function App() {
                     <li>While performing, press <span className="font-mono">Q</span> for next, <span className="font-mono">W</span> for previous, or <span className="font-mono">E</span> to reset to chord 1.</li>
                     <li>Use <span className="font-mono">1–9, 0, -, =</span> to select chord positions 1–12 directly.</li>
                     <li>Enable <span className="font-medium">Live revoice</span> to reshape sounding notes immediately when the active chord changes. Leave it off to apply the chord on your next canvas gesture.</li>
+                    <li>Use <span className="font-medium">Reset</span> to replace the current chord path with the eight-chord starter progression.</li>
                   </ol>
                   <p>The active chord defines the legal notes; the image and Harmony Model decide how the six voices move through them.</p>
                 </section>
